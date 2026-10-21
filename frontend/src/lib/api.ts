@@ -10,7 +10,11 @@ import {
   ValidationResult,
 } from "@/types";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_URL ||
+  (process.env.NODE_ENV === "production"
+    ? "https://medschedule-ai-api.vercel.app/api"
+    : "http://localhost:8000/api");
 
 export async function checkHealth(): Promise<{ status: string; gemini: boolean; database: boolean }> {
   try {
