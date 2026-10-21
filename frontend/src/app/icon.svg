@@ -1,0 +1,15 @@
+<svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="40" height="40" rx="9" fill="#0F172A" />
+  <defs>
+    <linearGradient id="medGrad" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0EA5E9" />
+      <stop offset="50%" stop-color="#10B981" />
+      <stop offset="100%" stop-color="#F59E0B" />
+    </linearGradient>
+  </defs>
+  <rect x="6" y="6" width="12" height="12" rx="3" stroke="url(#medGrad)" stroke-width="2.5" />
+  <rect x="22" y="6" width="12" height="12" rx="3" stroke="#0EA5E9" stroke-width="2.5" stroke-opacity="0.85" />
+  <rect x="6" y="22" width="12" height="12" rx="3" stroke="#10B981" stroke-width="2.5" stroke-opacity="0.85" />
+  <path d="M28 22V34M22 28H34" stroke="#F59E0B" stroke-width="3" stroke-linecap="round" />
+  <circle cx="20" cy="20" r="2.8" fill="#FFFFFF" />
+</svg>
