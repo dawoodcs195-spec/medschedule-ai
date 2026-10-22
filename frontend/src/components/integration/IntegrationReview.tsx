@@ -12,6 +12,8 @@ import {
   Plus,
   CheckCheck,
   RotateCcw,
+  RefreshCw,
+  Cpu,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -36,6 +38,7 @@ interface IntegrationReviewProps {
   onAddCustomLink: (link: ProposedLink) => void;
   onSuggestClinical?: () => Promise<number>;
   onProceed: () => void;
+  isLoading?: boolean;
   embeddingEngine: string;
 }
 
@@ -47,6 +50,7 @@ export const IntegrationReview: React.FC<IntegrationReviewProps> = ({
   onAddCustomLink,
   onSuggestClinical,
   onProceed,
+  isLoading = false,
 }) => {
   const [showAddForm, setShowAddForm] = useState(false);
   const [srcIdx, setSrcIdx] = useState<number>(0);
@@ -168,7 +172,28 @@ export const IntegrationReview: React.FC<IntegrationReviewProps> = ({
   };
 
   return (
-    <Card className="w-full max-w-full min-w-0 overflow-hidden">
+    <Card className="relative w-full max-w-full min-w-0 overflow-hidden">
+      {/* Full Solver Progress Overlay */}
+      {isLoading && (
+        <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-card/85 backdrop-blur-md p-6 text-center space-y-4 animate-in fade-in duration-200">
+          <div className="relative flex size-14 items-center justify-center rounded-2xl bg-gradient-to-tr from-indigo-600 to-emerald-500 text-white shadow-xl shadow-indigo-500/25 ring-4 ring-indigo-500/20">
+            <RefreshCw className="size-7 animate-spin" />
+          </div>
+          <div className="space-y-1.5 max-w-md">
+            <h3 className="text-base font-bold text-foreground">
+              Generating Conflict-Free Timetable...
+            </h3>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Google OR-Tools CP-SAT is computing 4-batch lab rotations (A, B, C, D) across 6 academic days and matching basic with clinical sciences.
+            </p>
+          </div>
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 text-[11px] font-medium border border-indigo-500/20">
+            <Cpu className="size-3.5 animate-pulse" />
+            <span>Solver Engine Active • Please wait a few seconds</span>
+          </div>
+        </div>
+      )}
+
       <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-border/70 p-4 sm:p-5 pb-4">
         <div className="flex items-center gap-2.5">
           <div className="flex size-8 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600 dark:bg-indigo-950/70 dark:text-indigo-400 shrink-0">
@@ -190,7 +215,7 @@ export const IntegrationReview: React.FC<IntegrationReviewProps> = ({
               size="xs"
               className="sm:h-8 sm:px-3 sm:text-xs"
               onClick={handleSuggestClinicalClick}
-              disabled={isSuggesting}
+              disabled={isSuggesting || isLoading}
             >
               <Sparkles className="size-3.5" />
               <span>{isSuggesting ? "Adding..." : "Suggest Clinical"}</span>
@@ -202,6 +227,7 @@ export const IntegrationReview: React.FC<IntegrationReviewProps> = ({
             size="xs"
             className="sm:h-8 sm:px-3 sm:text-xs"
             onClick={() => setShowAddForm(true)}
+            disabled={isLoading}
           >
             <Plus className="size-3.5" />
             <span>New Link</span>
@@ -212,6 +238,7 @@ export const IntegrationReview: React.FC<IntegrationReviewProps> = ({
             size="xs"
             className="sm:h-8 sm:px-3 sm:text-xs"
             onClick={() => onBulkApprove(true)}
+            disabled={isLoading}
           >
             <CheckCheck className="size-3.5" />
             <span>All</span>
@@ -222,6 +249,7 @@ export const IntegrationReview: React.FC<IntegrationReviewProps> = ({
             size="xs"
             className="sm:h-8 sm:px-3 sm:text-xs"
             onClick={() => onBulkApprove(false)}
+            disabled={isLoading}
           >
             <RotateCcw className="size-3.5" />
             <span>Clear</span>
@@ -230,11 +258,21 @@ export const IntegrationReview: React.FC<IntegrationReviewProps> = ({
           <Button
             variant="brand"
             size="lg"
-            className="w-full sm:w-auto mt-1 sm:mt-0"
+            className="w-full sm:w-auto mt-1 sm:mt-0 min-w-[190px]"
             onClick={onProceed}
+            disabled={isLoading}
           >
-            <span>Build Timetable ({approvedCount})</span>
-            <ArrowRight className="size-3.5" />
+            {isLoading ? (
+              <>
+                <RefreshCw className="size-4 animate-spin" />
+                <span>Generating Timetable...</span>
+              </>
+            ) : (
+              <>
+                <span>Build Timetable ({approvedCount})</span>
+                <ArrowRight className="size-3.5" />
+              </>
+            )}
           </Button>
         </div>
       </CardHeader>

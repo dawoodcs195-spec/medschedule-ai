@@ -1121,6 +1121,7 @@ export default function Home() {
             onAddCustomLink={handleAddCustomLink}
             onSuggestClinical={handleSuggestClinical}
             onProceed={() => handleGenerateSchedule(1)}
+            isLoading={isLoading}
             embeddingEngine={embeddingEngine}
           />
         )}
