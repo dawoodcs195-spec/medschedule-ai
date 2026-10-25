@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     GEMINI_EMBEDDING_MODEL: str = os.getenv("GEMINI_EMBEDDING_MODEL", "text-embedding-004")
     EMBEDDING_DIMENSION: int = 1536
+    # 'local' (offline medical ontology + TF-IDF, default) or 'gemini' (blend in Gemini embeddings)
+    EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "local")
 
     # Supabase / PostgreSQL Database Connection (Optional local fallback)
     SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")

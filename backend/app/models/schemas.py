@@ -73,11 +73,29 @@ class ParsedTopic(ExtractedTopic):
     original_day: Optional[int] = None
     original_start: Optional[str] = None
     original_end: Optional[str] = None
+    program: Optional[str] = Field(default=None, description="'MBBS' or 'BDS'")
+    academic_year: Optional[int] = Field(default=None, description="Year of study (1-5)")
+    cohort: Optional[str] = Field(default=None, description="Class key, e.g. 'MBBS-2'")
+    occurrences: int = Field(default=1, ge=1, description="Times the topic appears in the uploaded timetable")
 
 
 class LegendEntry(BaseModel):
     code: str = Field(description="e.g. 'HISTO P1', 'PHYSIO SGD', 'SKILL LAB'")
     title: str
+    cohort: Optional[str] = None
+
+
+class CohortSummary(BaseModel):
+    """One class (e.g. 2nd Year MBBS) found in an upload."""
+
+    cohort: str = Field(description="e.g. 'MBBS-2'")
+    label: str = Field(description="e.g. '2nd Year MBBS'")
+    program: str
+    academic_year: int
+    module_title: Optional[str] = None
+    module_code: Optional[str] = None
+    source: Optional[str] = Field(default=None, description="File name or 'pasted text'")
+    topic_count: int = 0
 
 
 class ParseResponse(BaseModel):
@@ -89,6 +107,7 @@ class ParseResponse(BaseModel):
     warnings: list[str] = []
     module_id: Optional[UUID] = None
     persisted: bool = False
+    cohorts: list[CohortSummary] = []
 
 
 class IngestTextRequest(BaseModel):
