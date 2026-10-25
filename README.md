@@ -113,7 +113,7 @@ flowchart LR
     end
 
     P -- "structured output" --> G[["Google Gemini"]]
-    I -- "vector(1536) · <=> cosine" --> DB[("Supabase Postgres<br/>+ pgvector")]
+    I -- "vector(1536) · cosine distance" --> DB[("Supabase Postgres<br/>+ pgvector")]
     X --> D[/"1-page landscape .docx"/]
 ```
 
