@@ -22,6 +22,8 @@ import {
   updateScheduleCell,
   validateSlotMove,
 } from "@/lib/api";
+import { errorMessage } from "@/lib/errors";
+import { applyStoredTheme, useTheme } from "@/lib/theme";
 import {
   ConflictDetail,
   Department,
@@ -56,7 +58,6 @@ import {
   Calendar,
   Sparkles,
   Download,
-  RefreshCw,
   BarChart3,
   Building2,
   Plus,
@@ -68,7 +69,6 @@ import {
   Clock,
   Cpu,
   CheckCircle2,
-  ArrowRight,
   Layers,
   Wand2,
   FileCheck2,
@@ -93,7 +93,7 @@ BIOCHEM P1 = Biochemical Lab Estimation
 SKILL LAB = Clinical History Taking & Examination`;
 
 export default function Home() {
-  const [isDark, setIsDark] = useState(false);
+  const { isDark, toggleTheme } = useTheme();
   const [activeStep, setActiveStep] = useState<1 | 2 | 3 | 4>(1);
   const [health, setHealth] = useState<{ status: string; gemini: boolean; database: boolean } | null>(null);
 
@@ -144,20 +144,6 @@ export default function Home() {
     );
     return topicLines.length > 0 ? topicLines.length : lines.length;
   }, [rawText]);
-
-  const toggleTheme = useCallback(() => {
-    setIsDark((prev) => {
-      const next = !prev;
-      if (next) {
-        document.documentElement.classList.add("dark");
-        localStorage.setItem("medschedule-theme", "dark");
-      } else {
-        document.documentElement.classList.remove("dark");
-        localStorage.setItem("medschedule-theme", "light");
-      }
-      return next;
-    });
-  }, []);
 
   const pushScheduleHistory = useCallback((current: TimetableSchedule) => {
     setPastSchedules((prev) => [...prev.slice(-29), structuredClone(current)]);
@@ -270,14 +256,7 @@ export default function Home() {
 
   // Initialize theme (Default Light Mode) & probe backend
   useEffect(() => {
-    const savedTheme = localStorage.getItem("medschedule-theme");
-    if (savedTheme === "dark") {
-      document.documentElement.classList.add("dark");
-      setIsDark(true);
-    } else {
-      document.documentElement.classList.remove("dark");
-      setIsDark(false);
-    }
+    applyStoredTheme();
 
     checkHealth().then(setHealth);
     listDepartments().then(setDepartments);
@@ -345,8 +324,8 @@ export default function Home() {
       });
       setNewDeptName("");
       setNewDeptCode("");
-    } catch (err: any) {
-      alert(`Could not add department: ${err.message}`);
+    } catch (err: unknown) {
+      alert(`Could not add department: ${errorMessage(err)}`);
     } finally {
       setIsAddingDept(false);
     }
@@ -367,8 +346,8 @@ export default function Home() {
       setEmbeddingEngine(clusterRes.embedding_engine);
 
       setActiveStep(2);
-    } catch (err: any) {
-      alert(`Ingestion error: ${err.message}`);
+    } catch (err: unknown) {
+      alert(`Ingestion error: ${errorMessage(err)}`);
     } finally {
       setIsLoading(false);
     }
@@ -418,8 +397,8 @@ export default function Home() {
     try {
       const saved = await saveScheduleSnapshot(schedule);
       setSavedSchedules((prev) => [saved, ...prev.filter((s) => s.id !== saved.id)].slice(0, 25));
-    } catch (err: any) {
-      alert(`Save error: ${err.message}`);
+    } catch (err: unknown) {
+      alert(`Save error: ${errorMessage(err)}`);
     } finally {
       setIsSavingSnapshot(false);
     }
@@ -471,8 +450,8 @@ export default function Home() {
       setSelectedCell(null);
       setLastConflicts([]);
       setActiveStep(3);
-    } catch (err: any) {
-      alert(`Scheduling error: ${err.message}`);
+    } catch (err: unknown) {
+      alert(`Scheduling error: ${errorMessage(err)}`);
     } finally {
       setIsLoading(false);
     }
@@ -554,8 +533,8 @@ export default function Home() {
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
-    } catch (err: any) {
-      alert(`Export error: ${err.message}`);
+    } catch (err: unknown) {
+      alert(`Export error: ${errorMessage(err)}`);
     } finally {
       setIsExporting(false);
     }
@@ -602,7 +581,7 @@ export default function Home() {
                   key={step}
                   type="button"
                   disabled={isDisabled}
-                  onClick={() => setActiveStep(step as any)}
+                  onClick={() => setActiveStep(step as 1 | 2 | 3 | 4)}
                   className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-all cursor-pointer disabled:opacity-40 disabled:pointer-events-none ${
                     isActive
                       ? "bg-card text-foreground shadow-2xs"
@@ -1244,7 +1223,7 @@ export default function Home() {
               key={step}
               type="button"
               disabled={isDisabled}
-              onClick={() => setActiveStep(step as any)}
+              onClick={() => setActiveStep(step as 1 | 2 | 3 | 4)}
               className={`flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium transition-colors cursor-pointer disabled:opacity-35 disabled:pointer-events-none ${
                 isActive ? "text-indigo-600 dark:text-indigo-400" : "text-muted-foreground"
               }`}
