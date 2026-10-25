@@ -56,13 +56,14 @@ MedSchedule AI automates the whole loop: **Upload → Align → Generate → Ref
 
 ## Features
 
-- **Multi-format curriculum ingestion** — upload `.docx`, `.xlsx` or `.txt` (a syllabus or last year's timetable), or paste lines in `Subject | Format | Topic | Faculty` form. A fast rule-based parser handles structured files; unstructured prose is sent to Gemini for JSON-schema-constrained extraction of topics, disciplines, session formats and faculty.
-- **Integration review screen** — proposed horizontal and vertical links with similarity scores and rationales; filter, edit, approve, delete, add your own, or auto-suggest missing clinical correlation topics before solving.
-- **Constraint-based solver** — Google OR-Tools **CP-SAT** builds a 6-day week (08:00–14:00, 12:00–12:30 break, Friday half-day until 12:00) with simultaneous 4-batch (A–D) rotations across Histology, Physiology, Biochemistry and Skill Lab.
+- **Multi-format, multi-class ingestion** — upload `.docx`, `.xlsx` or `.txt` timetables for one class or all of them at once (MBBS 1st–Final, BDS 1st–Final), or paste lines in `Subject | Format | Topic | Faculty` form. Each file's class comes from its `TIMETABLE FOR 2ND YEAR MBBS` header (or its file name), several classes can sit in one file, and topics taught more than once are counted. A fast rule-based parser handles structured files; unstructured prose is sent to Gemini for JSON-schema-constrained extraction.
+- **Semantic topic matching that works offline** — a medical/dental ontology (organs, systems, diseases; *cardiac → heart*, *renal → kidney*, *diabetic → diabetes*) combined with TF-IDF and character n-grams links *"Heart chambers"* (Anatomy) with *"Cardiac cycle"* (Physiology), or *"Diabetic retinopathy"* (Eye) with *"Diabetes mellitus"* (Medicine) and *"Diabetic foot"* (Surgery). Same class → **horizontal** link; different year → **vertical** link. Gemini embeddings can be blended in with `EMBEDDING_PROVIDER=gemini`.
+- **Integration review screen** — proposed links with scores, shared concepts and rationales, filterable by class; approve, reject, add your own, or auto-suggest missing clinical correlation topics before solving.
+- **Integrated, constraint-based solver** — Google OR-Tools **CP-SAT** builds a 6-day week (08:00–14:00, 12:00–12:30 break, Friday half-day until 12:00) with simultaneous 4-batch (A–D) lab rotations. Linked topics are packed into the same week and placed on the same or adjacent days in teaching order (anatomy → histology → physiology → biochemistry → pathology → medicine → surgery/specialties), and a teacher shared between classes is never double-booked when avoidable.
 - **Interactive matrix grid** — drag-and-drop rescheduling with *soft* conflict warnings (clashes are highlighted with suggested open slots instead of being blocked), undo/redo, and side-by-side comparison with the uploaded legacy timetable.
-- **Scheduling copilot** — natural-language commands such as *"swap Monday 8 AM with Wednesday 9 AM"*, *"reassign … to Dr. …"* or *"remove …"*, each validated against the same conflict checker.
-- **Analytics** — contact hours per subject, time-slot distribution and faculty workload.
-- **One-page Word export** — A4 landscape `.docx` generated with `python-docx` + raw OpenXML (`gridSpan` merges, fixed DXA column widths, discipline shading) with practical/SGD legend keys appended automatically.
+- **Scheduling copilot** — natural-language commands such as *"Give Cardiac cycle to Dr. Tariq"*, *"Renal filtration with Dr. Asma"*, *"Replace Dr. A with Dr. B"*, *"Swap Monday 8 AM with Wednesday 9 AM"* or *"Move … to Friday 10"* — or a numbered list of changes applied in one go — each validated against the same conflict checker.
+- **Analytics & report** — per week: contact hours, classes per subject and per teacher, time-slot distribution and how well linked topics were co-located; for the whole upload: classes per subject, how many times each topic is covered and teacher load across all classes, downloadable as a `.docx` report.
+- **One-page Word export** — A4 landscape `.docx` per class and week, generated with `python-docx` + raw OpenXML (`gridSpan` merges, fixed DXA column widths, discipline shading) with practical/SGD legend keys appended automatically.
 - **Polished UX** — medical-teal design system, animated landing page, a 9-step first-run product tour, light/dark themes and responsive layouts down to mobile.
 - **Runs without infrastructure** — no database or API key is required to try it: the backend falls back to in-memory storage, in-process cosine similarity and the rule-based parser.
 
@@ -104,7 +105,7 @@ flowchart LR
     subgraph Backend["FastAPI backend"]
         API["FastAPI · Pydantic v2"]
         P["Parser<br/>docx · xlsx · txt"]
-        I["Integrator<br/>1536-d embeddings · cosine similarity"]
+        I["Integrator<br/>medical ontology · TF-IDF · pgvector"]
         S["Solver<br/>OR-Tools CP-SAT"]
         C["Copilot<br/>conflict checker + NL commands"]
         X["Exporter<br/>python-docx + lxml"]
@@ -135,8 +136,8 @@ Both external services are optional: without `GEMINI_API_KEY` the rule-based par
 ## How scheduling and integration work
 
 1. **Ingestion.** `parser.py` reads the upload (`python-docx`, `openpyxl` or plain text) and first runs a fast rule-based extractor that recognises module headers, legend keys, timetable cells and `Subject | Format | Topic | Faculty` lines. Only when that finds nothing (free-form prose) does it call Gemini for a JSON-schema-constrained extraction, with a 12 s timeout and graceful fallback. Both paths produce the same `ParsedTopic` models.
-2. **Integration.** `integrator.py` turns every topic into a 1536-dimensional vector. Embeddings are currently computed locally with a deterministic hashing scheme enriched with medical concept clusters (e.g. spinal cord, cranial/radiology, synapse, special senses), so results are reproducible and work offline. When topics are persisted, pairs are ranked in Postgres with pgvector's `<=>` cosine distance; otherwise cosine similarity is computed in process. Pairs across basic sciences above a threshold become **horizontal** links; basic-science ↔ clinical pairs become **vertical** links. The coordinator reviews and approves them in the UI.
-3. **Solving.** `solver.py` builds a CP-SAT model over a slot grid that already encodes the operating hours, the 12:00–12:30 break and the Friday half-day. Boolean variables assign each topic to exactly one slot (at most one topic per slot) and each batch to a lab in every practical block, with hard constraints that each lab hosts exactly one batch, each batch is in exactly one lab, and every batch visits all four stations once across the week (a Latin-square rotation). Approved integration links become an objective that maximises same-day co-scheduling of linked topics. The solver runs with a time limit (8 s by default).
+2. **Integration.** `semantic.py` normalises each topic (British spellings, plurals, adjective forms such as *cardiac → heart*), maps it to concepts in a compact medical/dental ontology (organs, diseases, systems) and scores pairs as 0.55 × shared concepts + 0.15 × shared organ system + 0.30 × lexical similarity (TF-IDF over words and character 4-grams). `integrator.py` keeps pairs above 0.45, classifies them by class — same class, different subjects → **horizontal**; different years → **vertical** — and keeps each topic's strongest partners. Everything runs offline in pure Python (≈20 ms for 60 topics, ≈1 s for 600); `EMBEDDING_PROVIDER=gemini` optionally blends in Gemini embeddings. Persisted topics also get a 1536-d feature-hashed vector for pgvector's `<=>` queries. The coordinator reviews and approves links in the UI.
+3. **Solving.** `solver.py` first plans the module: approved links are grouped (union-find), each group is ordered structure → function → disease → management and packed whole into one teaching week. CP-SAT then places the week over a slot grid that already encodes the operating hours, the 12:00–12:30 break and the Friday half-day, minimising the day gap between linked lectures and penalising any linked pair taught out of order (warm-started from the planned order). Lab rotations keep their hard constraints: each lab hosts exactly one batch, each batch is in exactly one lab, and every batch visits all four stations once a week (a Latin square). For multi-class uploads `/schedule/generate-all` solves classes busiest-first and penalises any slot where a teacher is already teaching another class. Each lecture cell carries its links (*"↔ Physiology: Cardiac cycle (Tue 09:00)"*, *"↕ 4th Year MBBS Medicine: Diabetes mellitus"*).
 4. **Refinement.** Every drag-and-drop or copilot command goes through `copilot.py`'s conflict checker, which flags clashes (slot, venue, faculty, Friday half-day, daily break) as soft warnings and proposes open alternative slots.
 5. **Export.** `exporter.py` writes one A4-landscape page per week with fixed column widths, merged multi-hour cells and an automatic legend.
 
@@ -215,10 +216,10 @@ Create a Supabase project (or any Postgres 16 with `pgvector`) and run `supabase
 
 ```bash
 cd frontend && npm run lint && npm run build
-cd backend  && python -m compileall -q app && python tests/smoke_full_pipeline.py
+cd backend  && python -m compileall -q app && python tests/smoke_full_pipeline.py && python tests/test_client_requirements.py
 ```
 
-The smoke test runs the full pipeline offline (ingest sample `.docx` → integrate → solve → validate a move → export).
+The smoke test runs the full pipeline offline (ingest sample `.docx` → integrate → solve → validate a move → export). `test_client_requirements.py` uploads three classes at once (2nd Year MBBS `.docx`, 4th Year MBBS `.xlsx`, 1st Year BDS `.txt`, in `tests/fixtures/`) and checks the expected horizontal/vertical links and non-links, integrated ordering, teacher clashes, Copilot edits, report counts and exports.
 
 ## Environment variables
 
@@ -228,7 +229,8 @@ The smoke test runs the full pipeline offline (ingest sample `.docx` → integra
 | :--- | :---: | :--- |
 | `GEMINI_API_KEY` | No | Enables Gemini extraction for unstructured input; the rule-based parser works without it. |
 | `GEMINI_MODEL` | No | Gemini model id. Default `gemini-2.5-flash`. |
-| `GEMINI_EMBEDDING_MODEL` | No | Read by config; reserved for a hosted embedding model. |
+| `EMBEDDING_PROVIDER` | No | `local` (default, offline ontology + TF-IDF) or `gemini` to blend Gemini embeddings into link scores. |
+| `GEMINI_EMBEDDING_MODEL` | No | Embedding model used when `EMBEDDING_PROVIDER=gemini`. |
 | `DATABASE_URL` | No | Postgres connection string (pgvector). Falls back to `SUPABASE_URL`, then localhost. |
 | `SUPABASE_URL` | No | Supabase Postgres connection string. |
 | `SUPABASE_KEY` | No | Supabase key (reserved). |
@@ -249,9 +251,8 @@ The smoke test runs the full pipeline offline (ingest sample `.docx` → integra
 
 ## Roadmap
 
-- [ ] Use a hosted embedding model (Gemini) behind the existing `GEMINI_EMBEDDING_MODEL` setting, with the local embeddings kept as fallback
 - [ ] LLM-backed copilot for open-ended requests, keeping the current validated command handlers
-- [ ] Multi-week module planning and cross-week balancing
+- [ ] Share labs and lecture halls across classes (today each class's rotations are planned independently)
 - [ ] Authentication and multi-institution workspaces (Supabase Auth)
 - [ ] Persist saved schedules in Postgres instead of a local JSON file
 - [ ] Unit tests for solver constraints and the exporter; Playwright UI tests
