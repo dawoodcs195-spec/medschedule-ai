@@ -24,7 +24,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { errorMessage } from "@/lib/errors";
 
 interface CopilotDrawerProps {
   schedule: TimetableSchedule;
@@ -124,6 +125,8 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({
     if (swappableCells.length > 0 && !swappableCells.some((c) => c.id === swapTargetCellId)) {
       setSwapTargetCellId(swappableCells[0].id);
     }
+    // Intentionally only re-sync when the selection or schedule changes (not on every swap-target pick).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCell, schedule.cells]);
 
   const handleSaveDetails = async () => {
@@ -142,10 +145,10 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({
           text: typeof reply === "string" ? reply : `Updated "${editTitle}".`,
         },
       ]);
-    } catch (err: any) {
+    } catch (err: unknown) {
       setChatMessages((prev) => [
         ...prev,
-        { sender: "copilot", text: `Update failed: ${err.message}` },
+        { sender: "copilot", text: `Update failed: ${errorMessage(err)}` },
       ]);
     } finally {
       setIsApplying(false);
@@ -165,10 +168,10 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({
           text: `Moved "${selectedCell.topic_title}" to Day ${targetDay} (${start} – ${end}).`,
         },
       ]);
-    } catch (err: any) {
+    } catch (err: unknown) {
       setChatMessages((prev) => [
         ...prev,
-        { sender: "copilot", text: `Move failed: ${err.message}` },
+        { sender: "copilot", text: `Move failed: ${errorMessage(err)}` },
       ]);
     } finally {
       setIsApplying(false);
@@ -187,10 +190,10 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({
           text: typeof reply === "string" ? reply : `Swapped "${selectedCell.topic_title}".`,
         },
       ]);
-    } catch (err: any) {
+    } catch (err: unknown) {
       setChatMessages((prev) => [
         ...prev,
-        { sender: "copilot", text: `Swap failed: ${err.message}` },
+        { sender: "copilot", text: `Swap failed: ${errorMessage(err)}` },
       ]);
     } finally {
       setIsApplying(false);
@@ -211,10 +214,10 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({
         },
       ]);
       setActiveTab("chat");
-    } catch (err: any) {
+    } catch (err: unknown) {
       setChatMessages((prev) => [
         ...prev,
-        { sender: "copilot", text: `Remove failed: ${err.message}` },
+        { sender: "copilot", text: `Remove failed: ${errorMessage(err)}` },
       ]);
     } finally {
       setIsApplying(false);
@@ -230,10 +233,10 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({
     try {
       const reply = await onSendInstruction(userText);
       setChatMessages((prev) => [...prev, { sender: "copilot", text: reply }]);
-    } catch (err: any) {
+    } catch (err: unknown) {
       setChatMessages((prev) => [
         ...prev,
-        { sender: "copilot", text: `Error: ${err.message}` },
+        { sender: "copilot", text: `Error: ${errorMessage(err)}` },
       ]);
     } finally {
       setIsApplying(false);
@@ -259,7 +262,7 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({
               <SlidersHorizontal className="size-3.5" />
               <span>Inspector</span>
               {selectedCell && (
-                <span className="size-1.5 rounded-full bg-indigo-500" />
+                <span className="size-1.5 rounded-full bg-brand-500" />
               )}
             </TabsTrigger>
           </TabsList>
@@ -515,7 +518,7 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({
                   key={i}
                   className={`px-3 py-2 rounded-xl leading-relaxed ${
                     msg.sender === "user"
-                      ? "bg-indigo-600 text-white ml-6 text-right"
+                      ? "bg-brand-600 text-white ml-6 text-right"
                       : "bg-muted/70 text-foreground mr-4"
                   }`}
                 >

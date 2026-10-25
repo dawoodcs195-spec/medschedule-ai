@@ -25,10 +25,10 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ schedule
         <Card className="p-4">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-muted-foreground">Contact Hours</span>
-            <Clock className="size-4 text-indigo-500" />
+            <Clock className="size-4 text-brand-500" />
           </div>
           <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-2xl font-bold tracking-tight tabular-nums">{totalHours}h</span>
+            <span className="font-heading text-2xl font-bold tracking-tight tabular-nums">{totalHours}h</span>
             <Badge variant="slate">Week {schedule.week_number}</Badge>
           </div>
         </Card>
@@ -39,7 +39,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ schedule
             <BookOpen className="size-4 text-emerald-500" />
           </div>
           <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-2xl font-bold tracking-tight tabular-nums">
+            <span className="font-heading text-2xl font-bold tracking-tight tabular-nums">
               {Object.keys(disciplineHours).length}
             </span>
             <Badge variant="emerald">Active</Badge>
@@ -52,7 +52,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ schedule
             <UserCheck className="size-4 text-sky-500" />
           </div>
           <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-2xl font-bold tracking-tight tabular-nums">
+            <span className="font-heading text-2xl font-bold tracking-tight tabular-nums">
               {Object.keys(facultyHours).length}
             </span>
             <Badge variant="sky">Assigned</Badge>
@@ -98,7 +98,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ schedule
                   </div>
                   <div className="w-full h-1.5 rounded-full bg-muted overflow-hidden">
                     <div
-                      className="h-full rounded-full bg-indigo-500 transition-all duration-300"
+                      className="h-full rounded-full bg-linear-to-r from-brand-600 to-brand-400 transition-all duration-500"
                       style={{ width: `${pct}%` }}
                     />
                   </div>
@@ -134,7 +134,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ schedule
                   </div>
                   <div className="w-full h-1.5 rounded-full bg-muted overflow-hidden">
                     <div
-                      className="h-full rounded-full bg-emerald-500 transition-all duration-300"
+                      className="h-full rounded-full bg-linear-to-r from-emerald-600 to-emerald-400 transition-all duration-500"
                       style={{ width: `${pct}%` }}
                     />
                   </div>
@@ -155,13 +155,22 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ schedule
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-1.5 max-h-[280px] overflow-y-auto pr-1">
+            {Object.keys(facultyHours).length === 0 && (
+              <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border px-4 py-10 text-center">
+                <UserCheck className="size-5 text-muted-foreground" />
+                <p className="text-xs font-semibold text-foreground">No faculty assigned yet</p>
+                <p className="text-[11px] text-muted-foreground">
+                  Add faculty names in the Copilot inspector or your uploaded curriculum.
+                </p>
+              </div>
+            )}
             {Object.entries(facultyHours).map(([faculty, hours]) => (
               <div
                 key={faculty}
                 className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-muted/50 text-xs"
               >
                 <div className="flex items-center gap-2 min-w-0">
-                  <div className="size-5 rounded-full bg-indigo-500/15 text-indigo-600 dark:text-indigo-300 flex items-center justify-center font-semibold text-[10px] shrink-0">
+                  <div className="size-5 rounded-full bg-brand-500/15 text-brand-600 dark:text-brand-300 flex items-center justify-center font-semibold text-[10px] shrink-0">
                     {faculty.split(" ").slice(-1)[0]?.[0] || "D"}
                   </div>
                   <span className="font-medium text-foreground truncate">{faculty}</span>

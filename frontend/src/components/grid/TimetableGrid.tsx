@@ -104,7 +104,7 @@ function getCategoryStyles(
   if (isSwapSource) {
     return "ring-2 ring-amber-500 bg-amber-50/90 border-amber-500 text-amber-950 dark:bg-amber-950/60 dark:text-amber-200 shadow-sm z-10";
   }
-  const selectedRing = isSelected ? "ring-2 ring-indigo-500 shadow-sm z-10 " : "";
+  const selectedRing = isSelected ? "ring-2 ring-brand-500 shadow-sm z-10 " : "";
 
   switch (category) {
     case "ANATOMY":
@@ -485,7 +485,7 @@ export const TimetableGrid: React.FC<TimetableGridProps> = ({
                   onClick={() => setMobileDay(d.day)}
                   className={`py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                     isSelectedDay
-                      ? "bg-indigo-600 text-white shadow-xs"
+                      ? "bg-brand-600 text-white shadow-xs"
                       : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
@@ -1030,7 +1030,7 @@ export const TimetableGrid: React.FC<TimetableGridProps> = ({
                     const renderMini = (c?: ScheduledCell) =>
                       c ? (
                         <div className="p-1.5 rounded-md bg-muted/50 border border-border/70 space-y-0.5">
-                          <div className="text-[9px] font-semibold uppercase text-indigo-600 dark:text-indigo-400">
+                          <div className="text-[9px] font-semibold uppercase text-brand-600 dark:text-brand-400">
                             {c.session_type} • {c.discipline}
                           </div>
                           <div className="font-medium text-[11px] leading-snug line-clamp-2">
@@ -1108,7 +1108,7 @@ const DroppableCell: React.FC<{
       ref={setNodeRef}
       colSpan={colSpan}
       className={`group/cell p-1 border border-border/80 align-top transition-colors ${
-        isOver ? "bg-indigo-50/80 dark:bg-indigo-950/50 ring-2 ring-inset ring-indigo-500" : ""
+        isOver ? "bg-brand-50/80 dark:bg-brand-950/50 ring-2 ring-inset ring-brand-500" : ""
       } ${className}`}
     >
       {children ? (

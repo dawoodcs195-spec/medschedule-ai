@@ -13,7 +13,6 @@ import {
   CheckCheck,
   RotateCcw,
   RefreshCw,
-  Cpu,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -173,30 +172,9 @@ export const IntegrationReview: React.FC<IntegrationReviewProps> = ({
 
   return (
     <Card className="relative w-full max-w-full min-w-0 overflow-hidden">
-      {/* Full Solver Progress Overlay */}
-      {isLoading && (
-        <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-card/85 backdrop-blur-md p-6 text-center space-y-4 animate-in fade-in duration-200">
-          <div className="relative flex size-14 items-center justify-center rounded-2xl bg-gradient-to-tr from-indigo-600 to-emerald-500 text-white shadow-xl shadow-indigo-500/25 ring-4 ring-indigo-500/20">
-            <RefreshCw className="size-7 animate-spin" />
-          </div>
-          <div className="space-y-1.5 max-w-md">
-            <h3 className="text-base font-bold text-foreground">
-              Generating Conflict-Free Timetable...
-            </h3>
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              Google OR-Tools CP-SAT is computing 4-batch lab rotations (A, B, C, D) across 6 academic days and matching basic with clinical sciences.
-            </p>
-          </div>
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 text-[11px] font-medium border border-indigo-500/20">
-            <Cpu className="size-3.5 animate-pulse" />
-            <span>Solver Engine Active • Please wait a few seconds</span>
-          </div>
-        </div>
-      )}
-
       <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-border/70 p-4 sm:p-5 pb-4">
         <div className="flex items-center gap-2.5">
-          <div className="flex size-8 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600 dark:bg-indigo-950/70 dark:text-indigo-400 shrink-0">
+          <div className="flex size-9 items-center justify-center rounded-xl bg-linear-to-br from-brand-600 to-emerald-600 text-white shadow-sm shadow-brand-700/20 shrink-0">
             <Sparkles className="size-4" />
           </div>
           <div>
@@ -256,6 +234,7 @@ export const IntegrationReview: React.FC<IntegrationReviewProps> = ({
           </Button>
 
           <Button
+            data-tour="generate"
             variant="brand"
             size="lg"
             className="w-full sm:w-auto mt-1 sm:mt-0 min-w-[190px]"

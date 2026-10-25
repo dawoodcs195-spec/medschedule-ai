@@ -68,10 +68,10 @@ Medical curricula require tight horizontal integration (e.g., aligning Anatomy, 
 
 | Layer | Technology | Architectural Justification |
 | :---- | :---- | :---- |
-| **Frontend UI & Hosting** | Next.js 14+ (TypeScript), Tailwind CSS, React Query; Deployed on Vercel | Vercel provides seamless Edge deployment, server-side rendering for initial load speed, and fast client-side reactive rendering for high-density matrix components. |
+| **Frontend UI & Hosting** | Next.js 16 (React 19, TypeScript), Tailwind CSS v4, shadcn/ui, TanStack Query; Deployed on Vercel | Vercel provides seamless Edge deployment, server-side rendering for initial load speed, and fast client-side reactive rendering for high-density matrix components. |
 | **Backend Framework & Hosting** | Python 3.11+, FastAPI, Pydantic v2; Deployed on Container Platform (Render / Railway / Fly.io) | Dedicated container hosting provides persistent execution environment for long-running constraint solver tasks, native Python data science/OR-Tools integration, and asynchronous FastAPI performance. |
 | **Database & Vector Store** | Supabase Managed PostgreSQL 16+ with `pgvector` extension | Managed Supabase platform ensures instant vector search capability via pgvector alongside standard relational tables, ACID compliance, built-in Auth, and real-time backend capabilities. |
-| **LLM & AI Services** | Gemini 1.5 Pro / Flash APIs (Google AI Studio / Vertex AI) | Gemini 1.5 Pro/Flash provides extreme context windows for heavy syllabus processing, cost-effective structure extraction, and reliable conversational tool calling for the AI Copilot. |
+| **LLM & AI Services** | Gemini API via `google-genai` (default `gemini-2.5-flash`, configurable) | Gemini provides extreme context windows for heavy syllabus processing, cost-effective structure extraction, and reliable conversational tool calling for the AI Copilot. |
 | **Document Generation** | `python-docx` \+ Native `lxml` Element Manipulation | Enables precise control over Word processing files, allowing hardcoded XML column widths, custom shading, and border properties required for standardized institutional exports. |
 
 ---
@@ -130,7 +130,7 @@ Medical curricula require tight horizontal integration (e.g., aligning Anatomy, 
 
 ### **Step 1: Text/Docx Ingestion & Parsing**
 
-Unstructured syllabus documents, PDF files, and Word forms are ingested via `python-docx` or `pypdf`. Extracted text blocks are passed to Gemini 1.5 Pro / Flash using JSON Schema enforcing structured output. The parser converts free text into validated Pydantic models containing topics, requested contact hours, session types (Lecture, SGD, Lab), explicit faculty extraction, and prerequisites.
+Unstructured syllabus documents, PDF files, and Word forms are ingested via `python-docx` or `pypdf`. Extracted text blocks are passed to Gemini using JSON Schema enforcing structured output. The parser converts free text into validated Pydantic models containing topics, requested contact hours, session types (Lecture, SGD, Lab), explicit faculty extraction, and prerequisites.
 
 ### **Step 2: Semantic Clustering via pgvector**
 

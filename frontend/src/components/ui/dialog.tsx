@@ -25,7 +25,7 @@ function Dialog({ open, onOpenChange, children }: DialogProps) {
   return (
     <div
       data-slot="dialog-overlay"
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/45 backdrop-blur-[2px] p-0 sm:p-4 animate-in fade-in duration-150"
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-950/50 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in duration-150"
       onClick={() => onOpenChange(false)}
     >
       {children}
@@ -44,7 +44,7 @@ function DialogContent({
       data-slot="dialog-content"
       onClick={(e) => e.stopPropagation()}
       className={cn(
-        "bg-card text-card-foreground relative w-full max-w-lg max-h-[88dvh] overflow-y-auto rounded-t-2xl sm:rounded-xl border border-border p-4 sm:p-5 shadow-xl animate-in slide-in-from-bottom-4 sm:zoom-in-95 duration-150",
+        "bg-card text-card-foreground relative w-full max-w-lg max-h-[88dvh] overflow-y-auto rounded-t-3xl sm:rounded-2xl border border-border p-4 sm:p-6 shadow-2xl shadow-slate-950/20 animate-in slide-in-from-bottom-4 sm:zoom-in-95 duration-200",
         className
       )}
       {...props}
@@ -78,7 +78,7 @@ function DialogTitle({ className, ...props }: React.ComponentProps<"h3">) {
   return (
     <h3
       data-slot="dialog-title"
-      className={cn("text-sm font-semibold tracking-tight text-foreground", className)}
+      className={cn("font-heading text-base font-semibold tracking-tight text-foreground", className)}
       {...props}
     />
   )

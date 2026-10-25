@@ -41,3 +41,8 @@ frontend/.env.local
 Thumbs.db
 .vscode/
 .idea/
+
+# Local runtime data
+backend/.saved_schedules.json
+.saved_schedules.json
+test_export_output.docx

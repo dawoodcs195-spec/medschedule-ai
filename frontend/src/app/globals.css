@@ -4,12 +4,22 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * MedSchedule AI design system
+ * Generated with ui-ux-pro-max ("Accessible & Ethical" healthcare style + glass accents)
+ *   Primary  : medical teal/cyan  (#0891B2 → accessible #0E7490 for text/buttons on light)
+ *   Accent   : health green       (#16A34A)
+ *   Neutrals : slate
+ *   Fonts    : Figtree (headings) + Noto Sans (body) + Geist Mono (data)
+ *   Anti-patterns avoided: AI purple/pink gradients, emoji icons, low-contrast text.
+ */
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-body), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
-  --font-heading: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-heading-face), var(--font-body), ui-sans-serif, system-ui, sans-serif;
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
@@ -26,56 +36,83 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-surface: var(--surface);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) * 1.4);
   --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.4);
+
+  /* Brand scale (medical teal) — used wherever the old UI used indigo */
+  --color-brand-50: oklch(0.984 0.019 200.873);
+  --color-brand-100: oklch(0.956 0.045 203.388);
+  --color-brand-200: oklch(0.917 0.08 205.041);
+  --color-brand-300: oklch(0.865 0.127 207.078);
+  --color-brand-400: oklch(0.789 0.154 211.53);
+  --color-brand-500: oklch(0.715 0.143 215.221);
+  --color-brand-600: oklch(0.609 0.126 221.723);
+  --color-brand-700: oklch(0.52 0.105 223.128);
+  --color-brand-800: oklch(0.45 0.085 224.283);
+  --color-brand-900: oklch(0.398 0.07 227.392);
+  --color-brand-950: oklch(0.302 0.056 229.695);
+
+  --animate-aurora: aurora 18s ease-in-out infinite alternate;
+  --animate-float: float 6s ease-in-out infinite;
+  --animate-shimmer: shimmer 2.2s linear infinite;
 }
 
-/* Light Mode Default — Minimalist Airy Slate & Pure White Cards */
+/* Light — clean clinical white with teal primary */
 :root {
-  --background: oklch(0.985 0.002 247.839);
-  --foreground: oklch(0.145 0.015 255);
+  --background: oklch(0.985 0.004 210);
+  --foreground: oklch(0.21 0.03 250);
+  --surface: oklch(0.97 0.008 210);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0.015 255);
+  --card-foreground: oklch(0.21 0.03 250);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0.015 255);
-  --primary: oklch(0.21 0.034 264.665);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.962 0.005 247.896);
-  --secondary-foreground: oklch(0.21 0.034 264.665);
-  --muted: oklch(0.962 0.005 247.896);
-  --muted-foreground: oklch(0.51 0.02 257);
-  --accent: oklch(0.962 0.005 247.896);
-  --accent-foreground: oklch(0.21 0.034 264.665);
+  --popover-foreground: oklch(0.21 0.03 250);
+  --primary: oklch(0.52 0.105 223.128); /* #0E7490 — 5.4:1 on white */
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.96 0.014 210);
+  --secondary-foreground: oklch(0.3 0.05 230);
+  --muted: oklch(0.962 0.008 230);
+  --muted-foreground: oklch(0.47 0.03 255); /* slate-600-ish, ≥ 4.5:1 */
+  --accent: oklch(0.956 0.03 200);
+  --accent-foreground: oklch(0.36 0.07 225);
+  --success: oklch(0.527 0.154 150.069); /* #16A34A */
+  --success-foreground: oklch(0.99 0 0);
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.915 0.008 255);
-  --input: oklch(0.915 0.008 255);
-  --ring: oklch(0.585 0.205 264);
-  --radius: 0.625rem;
+  --border: oklch(0.915 0.012 230);
+  --input: oklch(0.9 0.014 230);
+  --ring: oklch(0.609 0.126 221.723);
+  --radius: 0.75rem;
 }
 
-/* Dark Mode — Balanced Low-Glare Slate/Zinc */
+/* Dark — deep navy-teal, low glare */
 .dark {
-  --background: oklch(0.135 0.012 260);
-  --foreground: oklch(0.965 0.005 255);
-  --card: oklch(0.185 0.014 260);
-  --card-foreground: oklch(0.965 0.005 255);
-  --popover: oklch(0.185 0.014 260);
-  --popover-foreground: oklch(0.965 0.005 255);
-  --primary: oklch(0.94 0.005 255);
-  --primary-foreground: oklch(0.185 0.014 260);
-  --secondary: oklch(0.245 0.015 260);
-  --secondary-foreground: oklch(0.965 0.005 255);
-  --muted: oklch(0.245 0.015 260);
-  --muted-foreground: oklch(0.68 0.015 255);
-  --accent: oklch(0.245 0.015 260);
-  --accent-foreground: oklch(0.965 0.005 255);
-  --destructive: oklch(0.68 0.19 22.2);
-  --border: oklch(1 0 0 / 11%);
+  --background: oklch(0.16 0.02 240);
+  --foreground: oklch(0.96 0.006 220);
+  --surface: oklch(0.19 0.022 240);
+  --card: oklch(0.205 0.024 240);
+  --card-foreground: oklch(0.96 0.006 220);
+  --popover: oklch(0.22 0.024 240);
+  --popover-foreground: oklch(0.96 0.006 220);
+  --primary: oklch(0.789 0.154 211.53); /* cyan-400 */
+  --primary-foreground: oklch(0.2 0.04 230);
+  --secondary: oklch(0.26 0.026 240);
+  --secondary-foreground: oklch(0.94 0.008 220);
+  --muted: oklch(0.255 0.024 240);
+  --muted-foreground: oklch(0.74 0.02 230);
+  --accent: oklch(0.28 0.04 225);
+  --accent-foreground: oklch(0.9 0.05 205);
+  --success: oklch(0.723 0.192 149.579);
+  --success-foreground: oklch(0.2 0.04 150);
+  --destructive: oklch(0.7 0.19 22.2);
+  --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 14%);
-  --ring: oklch(0.62 0.19 264);
+  --ring: oklch(0.715 0.143 215.221);
 }
 
 @layer base {
@@ -86,8 +123,105 @@
   body {
     @apply font-sans max-w-[100vw] overflow-x-hidden;
   }
+  html {
+    scroll-behavior: smooth;
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
   body {
-    @apply bg-background text-foreground antialiased selection:bg-indigo-500/15;
+    @apply bg-background text-foreground antialiased selection:bg-brand-500/20;
+    font-feature-settings: "cv11", "ss01";
+  }
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-heading);
+    letter-spacing: -0.015em;
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  label[for],
+  select {
+    cursor: pointer;
+  }
+}
+
+@layer components {
+  /* Subtle dotted canvas used behind the workspace */
+  .app-canvas {
+    background-image: radial-gradient(color-mix(in oklch, var(--foreground) 9%, transparent) 1px, transparent 1px);
+    background-size: 18px 18px;
+  }
+  /* Frosted panel for overlays and the sticky header */
+  .glass {
+    background: color-mix(in oklch, var(--card) 78%, transparent);
+    backdrop-filter: blur(16px) saturate(140%);
+    -webkit-backdrop-filter: blur(16px) saturate(140%);
+  }
+  .text-gradient-brand {
+    background-image: linear-gradient(100deg, var(--color-brand-700) 0%, var(--color-brand-500) 45%, oklch(0.6 0.15 155) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .dark .text-gradient-brand {
+    background-image: linear-gradient(100deg, var(--color-brand-300) 0%, var(--color-brand-400) 45%, oklch(0.8 0.17 155) 100%);
+  }
+  .shimmer-bar {
+    background: linear-gradient(90deg, transparent 0%, color-mix(in oklch, var(--primary) 55%, transparent) 50%, transparent 100%);
+    background-size: 200% 100%;
+  }
+}
+
+@keyframes aurora {
+  0% {
+    transform: translate3d(-6%, -4%, 0) scale(1) rotate(0deg);
+  }
+  50% {
+    transform: translate3d(4%, 3%, 0) scale(1.08) rotate(8deg);
+  }
+  100% {
+    transform: translate3d(8%, -2%, 0) scale(0.96) rotate(-6deg);
+  }
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+/* Respect reduced-motion everywhere (CSS animations; motion components use MotionConfig) */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }
 
