@@ -7,9 +7,11 @@ import {
   clusterTopics,
   createDepartment,
   downloadDocx,
+  generateAllSchedules,
   generateOriginalSchedule,
   generateSchedule,
   ingestFile,
+  ingestFiles,
   ingestText,
   listDepartments,
   listSavedSchedules,
@@ -44,6 +46,7 @@ import { TOUR_STORAGE_KEY, WORKSPACE_TOUR } from "@/components/tour/tour-steps";
 import { UploadStep } from "@/components/workspace/UploadStep";
 import { SolverOverlay } from "@/components/workspace/SolverOverlay";
 import { MobileStepNav, WorkspaceHeader, type WorkspaceStep } from "@/components/workspace/WorkspaceHeader";
+import { CohortSwitcher } from "@/components/workspace/CohortSwitcher";
 import { readFlag, useWorkspaceView, writeFlag } from "@/lib/use-workspace-view";
 import { AnimatePresence, motion } from "motion/react";
 import { Bot } from "lucide-react";
@@ -74,7 +77,7 @@ export default function Home() {
 
   // Ingestion & Module Metadata State (Clean slate for any university)
   const [rawText, setRawText] = useState("");
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [program, setProgram] = useState("MBBS");
   const [academicYear, setAcademicYear] = useState(2);
   const [moduleLabel, setModuleLabel] = useState("");
@@ -96,6 +99,11 @@ export default function Home() {
   // Timetable State & Undo/Redo History Stacks
   const [schedule, setSchedule] = useState<TimetableSchedule | null>(null);
   const [originalSchedule, setOriginalSchedule] = useState<TimetableSchedule | null>(null);
+  // Multi-class uploads: one timetable per class (cohort), the active one is edited in `schedule`
+  const [activeCohort, setActiveCohort] = useState<string | null>(null);
+  const [schedulesByCohort, setSchedulesByCohort] = useState<Record<string, TimetableSchedule>>({});
+  const [originalsByCohort, setOriginalsByCohort] = useState<Record<string, TimetableSchedule>>({});
+  const [solverWarnings, setSolverWarnings] = useState<string[]>([]);
   const [pastSchedules, setPastSchedules] = useState<TimetableSchedule[]>([]);
   const [futureSchedules, setFutureSchedules] = useState<TimetableSchedule[]>([]);
   const [selectedCell, setSelectedCell] = useState<ScheduledCell | null>(null);
@@ -308,13 +316,19 @@ export default function Home() {
 
   // Step 1: Run Ingestion (only when user clicks "Extract & Align Topics")
   const handleIngestText = async () => {
-    if (!selectedFile && !rawText.trim()) return;
+    if (selectedFiles.length === 0 && !rawText.trim()) return;
     setIsLoading(true);
     try {
-      const res = selectedFile
-        ? await ingestFile(selectedFile, program, academicYear, true, true)
-        : await ingestText(rawText, program, academicYear, true, true);
+      const res =
+        selectedFiles.length > 1
+          ? await ingestFiles(selectedFiles, program, academicYear, true, true)
+          : selectedFiles.length === 1
+            ? await ingestFile(selectedFiles[0], program, academicYear, true, true)
+            : await ingestText(rawText, program, academicYear, true, true);
       setParseResponse(res);
+      setActiveCohort(res.cohorts?.[0]?.cohort ?? null);
+      setSchedulesByCohort({});
+      setOriginalsByCohort({});
 
       const clusterRes = await clusterTopics(res.topics);
       setProposedLinks(clusterRes.links);
@@ -329,18 +343,20 @@ export default function Home() {
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setSelectedFile(file);
-    if (file.name.toLowerCase().endsWith(".txt")) {
+    const picked = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    if (picked.length === 0) return;
+    const key = (f: File) => `${f.name}:${f.size}`;
+    const merged = [...selectedFiles, ...picked.filter((f) => !selectedFiles.some((x) => key(x) === key(f)))];
+    setSelectedFiles(merged);
+    // Preview a single pasted-style .txt timetable in the editor
+    if (merged.length === 1 && merged[0].name.toLowerCase().endsWith(".txt")) {
       try {
-        const text = await file.text();
-        setRawText(text);
+        setRawText(await merged[0].text());
       } catch {
         // Ignore text preview error
       }
     }
-    e.target.value = "";
   };
 
   // Step 2: Link Approval
@@ -390,7 +406,19 @@ export default function Home() {
     setActiveStep(3);
   };
 
-  // Step 2 -> Step 3: Run CP-SAT Solver
+  const cohorts = useMemo(() => parseResponse?.cohorts ?? [], [parseResponse]);
+  const isMultiCohort = cohorts.length > 1;
+
+  // Every class's current timetable, with the live (possibly edited) one for the active class
+  const allSchedules = useMemo(() => {
+    if (!schedule) return [];
+    if (!isMultiCohort) return [schedule];
+    return cohorts
+      .map((c) => (c.cohort === activeCohort ? schedule : schedulesByCohort[c.cohort]))
+      .filter((s): s is TimetableSchedule => !!s);
+  }, [schedule, isMultiCohort, cohorts, activeCohort, schedulesByCohort]);
+
+  // Step 2 -> Step 3: Run CP-SAT Solver (every class at once for multi-class uploads)
   const handleGenerateSchedule = async (weekNum = 1) => {
     if (!parseResponse) return;
     setIsLoading(true);
@@ -401,25 +429,71 @@ export default function Home() {
         parseResponse.meta.module_title || moduleLabel.trim() || "INTEGRATED MODULE";
       const acadYear = parseResponse.meta.academic_year || academicYear;
 
-      const [sched, origSched] = await Promise.all([
-        generateSchedule({
-          topics: parseResponse.topics,
-          approved_links: approved,
-          module_code: moduleCode,
-          module_title: moduleTitle,
-          academic_year: acadYear,
-          week_number: weekNum,
-        }),
-        generateOriginalSchedule({
-          topics: parseResponse.topics,
-          module_code: moduleCode,
-          module_title: moduleTitle,
-          academic_year: acadYear,
-          week_number: weekNum,
-        }),
-      ]);
-      setSchedule(sched);
-      setOriginalSchedule(origSched);
+      if (isMultiCohort) {
+        const [all, originals] = await Promise.all([
+          generateAllSchedules({
+            topics: parseResponse.topics,
+            approved_links: approved,
+            module_code: moduleCode,
+            module_title: moduleTitle,
+            week_number: weekNum,
+            cohort_modules: Object.fromEntries(
+              cohorts.map((c) => [c.cohort, { module_title: c.module_title, module_code: c.module_code }])
+            ),
+          }),
+          Promise.all(
+            cohorts.map((c) =>
+              generateOriginalSchedule({
+                topics: parseResponse.topics,
+                module_code: c.module_code || moduleCode,
+                module_title: c.module_title || moduleTitle,
+                academic_year: c.academic_year,
+                week_number: weekNum,
+                cohort: c.cohort,
+              })
+            )
+          ),
+        ]);
+        const byCohort: Record<string, TimetableSchedule> = {};
+        all.schedules.forEach((s) => {
+          if (s.cohort) byCohort[s.cohort] = s;
+        });
+        const origByCohort: Record<string, TimetableSchedule> = {};
+        originals.forEach((s) => {
+          if (s.cohort) origByCohort[s.cohort] = s;
+        });
+        const current = activeCohort && byCohort[activeCohort] ? activeCohort : cohorts[0].cohort;
+        setSchedulesByCohort(byCohort);
+        setOriginalsByCohort(origByCohort);
+        setActiveCohort(current);
+        setSchedule(byCohort[current] ?? all.schedules[0]);
+        setOriginalSchedule(origByCohort[current] ?? null);
+        setSolverWarnings(all.warnings);
+      } else {
+        const cohort = cohorts[0]?.cohort ?? null;
+        const [sched, origSched] = await Promise.all([
+          generateSchedule({
+            topics: parseResponse.topics,
+            approved_links: approved,
+            module_code: moduleCode,
+            module_title: moduleTitle,
+            academic_year: acadYear,
+            week_number: weekNum,
+            cohort,
+          }),
+          generateOriginalSchedule({
+            topics: parseResponse.topics,
+            module_code: moduleCode,
+            module_title: moduleTitle,
+            academic_year: acadYear,
+            week_number: weekNum,
+            cohort,
+          }),
+        ]);
+        setSchedule(sched);
+        setOriginalSchedule(origSched);
+        setSolverWarnings([]);
+      }
       setPastSchedules([]);
       setFutureSchedules([]);
       setSelectedCell(null);
@@ -430,6 +504,20 @@ export default function Home() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleSwitchCohort = (next: string) => {
+    if (!schedule || next === activeCohort) return;
+    const target = schedulesByCohort[next];
+    if (!target) return;
+    if (activeCohort) setSchedulesByCohort((prev) => ({ ...prev, [activeCohort]: schedule }));
+    setActiveCohort(next);
+    setSchedule(target);
+    setOriginalSchedule(originalsByCohort[next] ?? null);
+    setPastSchedules([]);
+    setFutureSchedules([]);
+    setSelectedCell(null);
+    setLastConflicts([]);
   };
 
   const handlePullOldTable = () => {
@@ -627,8 +715,8 @@ export default function Home() {
                 setSessionLabel={setSessionLabel}
                 rawText={rawText}
                 setRawText={setRawText}
-                selectedFile={selectedFile}
-                setSelectedFile={setSelectedFile}
+                selectedFiles={selectedFiles}
+                setSelectedFiles={setSelectedFiles}
                 onFileUpload={handleFileUpload}
                 detectedTopicCount={detectedTopicCount}
                 formatTemplate={FORMAT_TEMPLATE}
@@ -668,6 +756,15 @@ export default function Home() {
             {activeStep === 3 && schedule && (
               <div className="min-w-0">
                 <StepHeading step={3} label="Timetable" title="Refine your week" />
+                {isMultiCohort && (
+                  <CohortSwitcher
+                    cohorts={cohorts}
+                    active={activeCohort}
+                    onChange={handleSwitchCohort}
+                    schedules={allSchedules}
+                    warnings={solverWarnings}
+                  />
+                )}
                 <div className="grid w-full min-w-0 grid-cols-1 items-start gap-4 xl:grid-cols-4">
                   <div data-tour="grid" className="w-full min-w-0 max-w-full xl:col-span-3">
                     <TimetableGrid
@@ -733,7 +830,21 @@ export default function Home() {
             {activeStep === 4 && schedule && (
               <div className="min-w-0">
                 <StepHeading step={4} label="Analytics" title="Audit hours & teaching load" />
-                <AnalyticsDashboard schedule={schedule} />
+                {isMultiCohort && (
+                  <CohortSwitcher
+                    cohorts={cohorts}
+                    active={activeCohort}
+                    onChange={handleSwitchCohort}
+                    schedules={allSchedules}
+                    warnings={[]}
+                  />
+                )}
+                <AnalyticsDashboard
+                  schedule={schedule}
+                  topics={parseResponse?.topics ?? []}
+                  links={proposedLinks}
+                  allSchedules={allSchedules}
+                />
               </div>
             )}
           </motion.div>

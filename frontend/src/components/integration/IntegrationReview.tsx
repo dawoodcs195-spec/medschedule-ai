@@ -58,9 +58,16 @@ export const IntegrationReview: React.FC<IntegrationReviewProps> = ({
   const [customRationale, setCustomRationale] = useState("");
   const [isSuggesting, setIsSuggesting] = useState(false);
   const [suggestMessage, setSuggestMessage] = useState<string | null>(null);
+  const [cohortFilter, setCohortFilter] = useState<string>("ALL");
 
-  const horizontalLinks = links.filter((l) => l.integration_type === "HORIZONTAL");
-  const verticalLinks = links.filter((l) => l.integration_type === "VERTICAL");
+  const cohortKeys = Array.from(new Set(topics.map((t) => t.cohort).filter((c): c is string => !!c))).sort();
+  const isMultiCohort = cohortKeys.length > 1;
+  const visibleLinks =
+    cohortFilter === "ALL"
+      ? links
+      : links.filter((l) => l.source_cohort === cohortFilter || l.target_cohort === cohortFilter);
+  const horizontalLinks = visibleLinks.filter((l) => l.integration_type === "HORIZONTAL");
+  const verticalLinks = visibleLinks.filter((l) => l.integration_type === "VERTICAL");
   const approvedCount = links.filter((l) => l.is_approved).length;
 
   const handleSuggestClinicalClick = async () => {
@@ -87,6 +94,10 @@ export const IntegrationReview: React.FC<IntegrationReviewProps> = ({
         typeof crypto !== "undefined" && crypto.randomUUID
           ? crypto.randomUUID()
           : `custom-${Date.now()}`,
+      source_objective_id: s.id ?? null,
+      target_objective_id: t.id ?? null,
+      source_cohort: s.cohort ?? null,
+      target_cohort: t.cohort ?? null,
       source_index: srcIdx,
       target_index: tgtIdx,
       source_topic: s.topic_title,
@@ -134,10 +145,16 @@ export const IntegrationReview: React.FC<IntegrationReviewProps> = ({
             >
               <div className="space-y-1.5 flex-1 min-w-0">
                 <div className="flex items-center gap-1.5 flex-wrap">
-                  <Badge variant={isHoriz ? "sky" : "sky"}>{link.source_discipline}</Badge>
+                  {isMultiCohort && link.source_cohort && (
+                    <Badge variant="slate" className="font-mono text-[10px]">{link.source_cohort}</Badge>
+                  )}
+                  <Badge variant="sky">{link.source_discipline}</Badge>
                   <span className="text-[11px] text-muted-foreground font-mono">
                     {isHoriz ? "↔" : "→"}
                   </span>
+                  {isMultiCohort && !isHoriz && link.target_cohort && (
+                    <Badge variant="slate" className="font-mono text-[10px]">{link.target_cohort}</Badge>
+                  )}
                   <Badge variant={isHoriz ? "sky" : "purple"}>{link.target_discipline}</Badge>
                   <span className="ml-auto font-mono text-[11px] text-muted-foreground">
                     {(link.similarity_score * 100).toFixed(0)}%
@@ -150,6 +167,11 @@ export const IntegrationReview: React.FC<IntegrationReviewProps> = ({
                   </span>{" "}
                   {link.target_topic}
                 </p>
+                {link.shared_concepts && link.shared_concepts.length > 0 && (
+                  <p className="text-[11px] text-muted-foreground">
+                    Shared: {link.shared_concepts.map((c) => c.replace(/_/g, " ")).join(", ")}
+                  </p>
+                )}
               </div>
 
               <Button
@@ -180,7 +202,7 @@ export const IntegrationReview: React.FC<IntegrationReviewProps> = ({
           <div>
             <CardTitle className="text-sm sm:text-base">Topic Alignment</CardTitle>
             <p className="text-[11px] sm:text-xs text-muted-foreground">
-              {horizontalLinks.length} Horizontal • {verticalLinks.length} Vertical •{" "}
+              {horizontalLinks.length} Horizontal (same class) • {verticalLinks.length} Vertical (across years) •{" "}
               {approvedCount} Approved
             </p>
           </div>
@@ -267,9 +289,9 @@ export const IntegrationReview: React.FC<IntegrationReviewProps> = ({
         )}
 
         <Tabs defaultValue="all">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <TabsList className="w-full sm:w-fit grid grid-cols-3 sm:inline-flex">
-              <TabsTrigger value="all">All ({links.length})</TabsTrigger>
+              <TabsTrigger value="all">All ({visibleLinks.length})</TabsTrigger>
               <TabsTrigger value="horizontal">
                 <GitMerge className="size-3 text-sky-600 hidden xs:inline" />
                 <span>Horiz ({horizontalLinks.length})</span>
@@ -279,10 +301,25 @@ export const IntegrationReview: React.FC<IntegrationReviewProps> = ({
                 <span>Vert ({verticalLinks.length})</span>
               </TabsTrigger>
             </TabsList>
+            {isMultiCohort && (
+              <Select
+                aria-label="Filter links by class"
+                value={cohortFilter}
+                onChange={(e) => setCohortFilter(e.target.value)}
+                className="h-8 w-full text-xs sm:w-48"
+              >
+                <option value="ALL">All classes ({cohortKeys.length})</option>
+                {cohortKeys.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </Select>
+            )}
           </div>
 
           <TabsContent value="all" className="pt-2">
-            {renderLinkList(links, "HORIZONTAL")}
+            {renderLinkList(visibleLinks, "HORIZONTAL")}
           </TabsContent>
           <TabsContent value="horizontal" className="pt-2">
             {renderLinkList(horizontalLinks, "HORIZONTAL")}
@@ -299,7 +336,7 @@ export const IntegrationReview: React.FC<IntegrationReviewProps> = ({
           <DialogHeader>
             <DialogTitle>New Topic Link</DialogTitle>
             <DialogDescription>
-              Pair two topics into the same week.
+              Linked topics in the same class are taught in the same week, in logical order.
             </DialogDescription>
           </DialogHeader>
 
@@ -309,7 +346,7 @@ export const IntegrationReview: React.FC<IntegrationReviewProps> = ({
               <Select value={srcIdx} onChange={(e) => setSrcIdx(Number(e.target.value))}>
                 {topics.map((t, idx) => (
                   <option key={idx} value={idx}>
-                    [{t.discipline}] {t.topic_title.slice(0, 55)}
+                    {t.cohort ? `${t.cohort} · ` : ""}[{t.discipline}] {t.topic_title.slice(0, 55)}
                   </option>
                 ))}
               </Select>
@@ -320,7 +357,7 @@ export const IntegrationReview: React.FC<IntegrationReviewProps> = ({
               <Select value={tgtIdx} onChange={(e) => setTgtIdx(Number(e.target.value))}>
                 {topics.map((t, idx) => (
                   <option key={idx} value={idx}>
-                    [{t.discipline}] {t.topic_title.slice(0, 55)}
+                    {t.cohort ? `${t.cohort} · ` : ""}[{t.discipline}] {t.topic_title.slice(0, 55)}
                   </option>
                 ))}
               </Select>
@@ -332,8 +369,8 @@ export const IntegrationReview: React.FC<IntegrationReviewProps> = ({
                 value={linkType}
                 onChange={(e) => setLinkType(e.target.value as "HORIZONTAL" | "VERTICAL")}
               >
-                <option value="HORIZONTAL">Horizontal (Same-Year Basic Sciences)</option>
-                <option value="VERTICAL">Vertical (Basic → Clinical)</option>
+                <option value="HORIZONTAL">Horizontal (same class, different subjects)</option>
+                <option value="VERTICAL">Vertical (same topic, another year)</option>
               </Select>
             </div>
 

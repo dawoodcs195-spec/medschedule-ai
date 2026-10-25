@@ -25,8 +25,8 @@ interface UploadStepProps {
   setSessionLabel: (v: string) => void;
   rawText: string;
   setRawText: (v: string) => void;
-  selectedFile: File | null;
-  setSelectedFile: (f: File | null) => void;
+  selectedFiles: File[];
+  setSelectedFiles: (files: File[]) => void;
   onFileUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
   detectedTopicCount: number;
   formatTemplate: string;
@@ -62,8 +62,8 @@ export function UploadStep(props: UploadStepProps) {
     setSessionLabel,
     rawText,
     setRawText,
-    selectedFile,
-    setSelectedFile,
+    selectedFiles,
+    setSelectedFiles,
     onFileUpload,
     detectedTopicCount,
     formatTemplate,
@@ -79,6 +79,9 @@ export function UploadStep(props: UploadStepProps) {
     isAddingDept,
     onAddDepartment,
   } = props;
+  const selectedFile = selectedFiles[0] ?? null;
+  const fileCount = selectedFiles.length;
+  const totalKb = selectedFiles.reduce((sum, f) => sum + f.size, 0) / 1024;
 
   return (
     <div className="mx-auto w-full min-w-0 max-w-5xl space-y-5">
@@ -96,8 +99,8 @@ export function UploadStep(props: UploadStepProps) {
           Bring in your module curriculum
         </h1>
         <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
-          Upload your college&apos;s syllabus or previous timetable, or paste topics below. We&apos;ll align basic and
-          clinical sciences and prepare a conflict-free weekly schedule.
+          Upload timetables for one class or all of them at once (MBBS 1st–Final, BDS 1st–Final), or paste topics
+          below. We&apos;ll link the same topics across subjects and years and build an integrated, conflict-free week.
         </p>
       </motion.div>
 
@@ -139,7 +142,7 @@ export function UploadStep(props: UploadStepProps) {
               <div className="min-w-0">
                 <CardTitle className="truncate text-base font-bold sm:text-lg">Upload your university curriculum</CardTitle>
                 <p className="mt-0.5 truncate text-xs text-muted-foreground sm:text-[13px]">
-                  .docx, .xlsx or .txt — or type topics into the editor.
+                  .docx, .xlsx or .txt — one file per class, or several classes in one file.
                 </p>
               </div>
             </div>
@@ -155,14 +158,18 @@ export function UploadStep(props: UploadStepProps) {
             {/* Module metadata */}
             <div className="grid min-w-0 grid-cols-2 gap-3 lg:grid-cols-4">
               <div className="min-w-0 space-y-1.5">
-                <Label htmlFor="ms-program">Program</Label>
+                <Label htmlFor="ms-program" title="Used when a file has no 'TIMETABLE FOR … YEAR' header">
+                  Default program
+                </Label>
                 <Select id="ms-program" suppressHydrationWarning value={program} onChange={(e) => setProgram(e.target.value)}>
                   <option value="MBBS">MBBS</option>
                   <option value="BDS">BDS</option>
                 </Select>
               </div>
               <div className="min-w-0 space-y-1.5">
-                <Label htmlFor="ms-year">Year</Label>
+                <Label htmlFor="ms-year" title="Used when a file has no 'TIMETABLE FOR … YEAR' header">
+                  Default year
+                </Label>
                 <Select
                   id="ms-year"
                   suppressHydrationWarning
@@ -211,35 +218,42 @@ export function UploadStep(props: UploadStepProps) {
                   {selectedFile ? <CheckCircle2 className="size-6" /> : <Upload className="size-6" />}
                 </div>
 
-                {selectedFile ? (
-                  <div className="max-w-full space-y-1.5 px-2">
+                {fileCount > 0 ? (
+                  <div className="w-full max-w-full space-y-1.5 px-1">
                     <Badge variant="emerald" className="px-2 py-0.5 text-[10px]">
-                      File attached &amp; ready
+                      {fileCount === 1 ? "File attached & ready" : `${fileCount} class timetables ready`}
                     </Badge>
-                    <p className="mx-auto max-w-[240px] truncate text-sm font-semibold text-foreground">{selectedFile.name}</p>
+                    <ul className="sleek-scrollbar mx-auto max-h-32 max-w-[260px] space-y-1 overflow-y-auto text-left">
+                      {selectedFiles.map((f) => (
+                        <li
+                          key={`${f.name}-${f.size}`}
+                          className="flex items-center justify-between gap-2 rounded-lg bg-muted/60 px-2 py-1 text-xs"
+                        >
+                          <span className="truncate font-medium text-foreground">{f.name}</span>
+                          <button
+                            type="button"
+                            aria-label={`Remove ${f.name}`}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setSelectedFiles(selectedFiles.filter((x) => x !== f));
+                            }}
+                            className="shrink-0 rounded p-0.5 text-rose-700 hover:bg-rose-500/10 dark:text-rose-400"
+                          >
+                            <Trash2 className="size-3" />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
                     <p className="text-xs text-muted-foreground">
-                      {(selectedFile.size / 1024).toFixed(1)} KB • Click <strong>Extract &amp; Align Topics</strong> below
+                      {totalKb.toFixed(1)} KB • Click to add more, then <strong>Extract &amp; Align Topics</strong>
                     </p>
-                    <div className="pt-1">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          setSelectedFile(null);
-                        }}
-                        className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-semibold text-rose-700 hover:underline dark:text-rose-400"
-                      >
-                        <Trash2 className="size-3" />
-                        <span>Remove file</span>
-                      </button>
-                    </div>
                   </div>
                 ) : (
                   <>
                     <div className="space-y-1">
-                      <p className="text-sm font-semibold text-foreground">Upload syllabus or timetable</p>
-                      <p className="text-xs text-muted-foreground">Click to browse, then press Extract below</p>
+                      <p className="text-sm font-semibold text-foreground">Upload timetables or syllabi</p>
+                      <p className="text-xs text-muted-foreground">Select one or many files (e.g. all 10 classes)</p>
                     </div>
                     <div className="flex flex-wrap items-center justify-center gap-1.5 pt-1">
                       <Badge variant="sky" className="px-2 py-0.5 font-mono text-[10px]">.DOCX</Badge>
@@ -248,7 +262,7 @@ export function UploadStep(props: UploadStepProps) {
                     </div>
                   </>
                 )}
-                <input type="file" accept=".docx,.xlsx,.txt" onChange={onFileUpload} className="sr-only" />
+                <input type="file" accept=".docx,.xlsx,.txt" multiple onChange={onFileUpload} className="sr-only" />
               </label>
 
               <div className="flex min-w-0 flex-col overflow-hidden rounded-2xl border border-border bg-card transition-all focus-within:border-brand-500/70 focus-within:ring-2 focus-within:ring-ring/25 md:col-span-3">
@@ -263,7 +277,11 @@ export function UploadStep(props: UploadStepProps) {
                     <span className="truncate text-xs font-medium text-foreground">
                       Live parser •{" "}
                       <span className="font-semibold tabular-nums text-brand-700 dark:text-brand-300">
-                        {selectedFile ? `File attached (${selectedFile.name})` : `${detectedTopicCount} topics detected`}
+                        {fileCount > 1
+                          ? `${fileCount} files attached`
+                          : selectedFile
+                            ? `File attached (${selectedFile.name})`
+                            : `${detectedTopicCount} topics detected`}
                       </span>
                     </span>
                   </div>
@@ -313,7 +331,7 @@ export function UploadStep(props: UploadStepProps) {
                   label="Extract & Align Topics"
                   generatingLabel="Extracting & Aligning..."
                   onClick={onIngest}
-                  disabled={isLoading || (!selectedFile && !rawText.trim())}
+                  disabled={isLoading || (fileCount === 0 && !rawText.trim())}
                 />
               </div>
             </div>

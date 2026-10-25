@@ -1,19 +1,31 @@
 "use client";
 
 import React from "react";
-import { TimetableSchedule } from "@/types";
-import { BarChart3, Clock, UserCheck, BookOpen, CalendarClock } from "lucide-react";
+import { ParsedTopic, ProposedLink, TimetableSchedule } from "@/types";
+import { BarChart3, Clock, UserCheck, BookOpen, CalendarClock, Link2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { ModuleReport } from "@/components/analytics/ModuleReport";
 
 interface AnalyticsDashboardProps {
   schedule: TimetableSchedule;
+  topics?: ParsedTopic[];
+  links?: ProposedLink[];
+  allSchedules?: TimetableSchedule[];
 }
 
-export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ schedule }) => {
+export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
+  schedule,
+  topics = [],
+  links = [],
+  allSchedules = [],
+}) => {
   const disciplineHours = schedule.analytics.contact_hours_by_discipline || {};
   const facultyHours = schedule.analytics.faculty_hours || {};
   const timeBrackets = schedule.analytics.time_bracket_distribution || {};
+  const disciplineClasses = schedule.analytics.classes_by_discipline || {};
+  const facultyClasses = schedule.analytics.classes_by_faculty || {};
+  const integration = schedule.analytics.integration;
 
   const totalHours = schedule.total_contact_hours;
   const totalSlots = Object.values(timeBrackets).reduce((a, b) => a + b, 0);
@@ -61,14 +73,27 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ schedule
 
         <Card className="p-4">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted-foreground">Status</span>
-            <BarChart3 className="size-4 text-purple-500" />
+            <span className="text-xs font-medium text-muted-foreground">Integrated groups</span>
+            {integration ? <Link2 className="size-4 text-purple-500" /> : <BarChart3 className="size-4 text-purple-500" />}
           </div>
           <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-lg font-bold tracking-tight capitalize">
-              {schedule.solver_status.replace("_", " ").toLowerCase()}
-            </span>
-            <Badge variant="purple">Verified</Badge>
+            {integration ? (
+              <>
+                <span className="font-heading text-2xl font-bold tracking-tight tabular-nums">
+                  {integration.linked_groups}
+                </span>
+                <Badge variant="purple" title="Linked groups taught in logical order (structure → function → clinical)">
+                  {integration.groups_in_logical_order}/{integration.linked_groups} in order
+                </Badge>
+              </>
+            ) : (
+              <>
+                <span className="text-lg font-bold tracking-tight capitalize">
+                  {schedule.solver_status.replace("_", " ").toLowerCase()}
+                </span>
+                <Badge variant="purple">Verified</Badge>
+              </>
+            )}
           </div>
         </Card>
       </div>
@@ -93,7 +118,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ schedule
                   <div className="flex justify-between text-xs">
                     <span className="font-medium text-foreground">{discipline}</span>
                     <span className="font-mono text-muted-foreground tabular-nums">
-                      {hours}h ({pct}%)
+                      {disciplineClasses[discipline] ?? 0} cls · {hours}h ({pct}%)
                     </span>
                   </div>
                   <div className="w-full h-1.5 rounded-full bg-muted overflow-hidden">
@@ -176,13 +201,17 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ schedule
                   <span className="font-medium text-foreground truncate">{faculty}</span>
                 </div>
                 <span className="font-mono font-semibold text-foreground tabular-nums shrink-0">
-                  {hours}h
+                  {facultyClasses[faculty] ?? 0} cls · {hours}h
                 </span>
               </div>
             ))}
           </CardContent>
         </Card>
       </div>
+
+      {topics.length > 0 && (
+        <ModuleReport topics={topics} links={links} schedules={allSchedules.length ? allSchedules : [schedule]} />
+      )}
     </div>
   );
 };

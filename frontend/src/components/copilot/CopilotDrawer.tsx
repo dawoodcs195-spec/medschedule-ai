@@ -491,10 +491,11 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({
                 const chips = [
                   `Swap ${firstTopic} with ${secondTopic}`,
                   `Move ${firstTopic} to Wednesday 10 AM`,
-                  `Remove ${firstTopic}`,
+                  `Give ${firstTopic} to Dr. `,
                   firstFaculty
-                    ? `Change teacher of ${firstTopic} to Faculty Name`
-                    : `Change teacher of ${firstTopic}`,
+                    ? `Replace ${firstFaculty} with Dr. `
+                    : `Remove ${firstTopic}`,
+                  `Give ${secondTopic} to Dr. ; Swap Monday 8 AM with Tuesday 9 AM`,
                 ];
                 return chips.map((cmd, i) => (
                   <button
@@ -533,7 +534,7 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
-              placeholder="Ask Copilot to move, swap, or edit..."
+              placeholder="Move, swap, reassign… (separate several changes with ;)"
               className="flex-1"
             />
             <Button
