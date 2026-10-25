@@ -21,12 +21,13 @@ from app.models.schemas import (
     Department, DepartmentCreate, ExtractedModuleMeta, IngestTextRequest, LegendEntry,
     ParsedTopic, ParseResponse,
 )
-from app.services import copilot, exporter, integrator, parser, repository, solver
+from app.services import analytics, copilot, exporter, integrator, parser, repository, solver
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
+MAX_BATCH_FILES = 20
 
 
 def _safe_db():
@@ -63,7 +64,22 @@ def _finalize(
             return
         bg_db = SessionLocal()
         try:
-            repository.persist_parse_result(bg_db, result_copy, program, academic_year)
+            # One module per class so multi-cohort uploads keep their programme/year.
+            for summary in result_copy.cohorts or [None]:
+                part = result_copy
+                if summary is not None and len(result_copy.cohorts) > 1:
+                    part = result_copy.model_copy(update={
+                        "topics": [t for t in result_copy.topics if t.cohort == summary.cohort],
+                        "meta": ExtractedModuleMeta(
+                            program=summary.program,
+                            academic_year=summary.academic_year,
+                            module_title=summary.module_title,
+                            module_code=summary.module_code,
+                        ),
+                    })
+                repository.persist_parse_result(
+                    bg_db, part, part.meta.program or program, part.meta.academic_year or academic_year
+                )
         except Exception:
             bg_db.rollback()
             logger.exception("Background persistence failed")
@@ -87,15 +103,31 @@ def health():
 
 @router.post("/ingest/text", response_model=ParseResponse, tags=["ingestion"])
 def ingest_text(req: IngestTextRequest):
-    doc = parser.read_text(req.text)
-    overrides = ExtractedModuleMeta(
-        program=req.program,
-        academic_year=req.academic_year,
-        module_title=req.module_title,
-        module_code=req.module_code,
+    """Parse pasted text. Several classes can be pasted together, each under its own
+    'TIMETABLE FOR <N> YEAR MBBS|BDS' header; text without a header uses the form's class."""
+    sections = parser.read_text_sections(req.text, "pasted text")
+    overrides = ExtractedModuleMeta(module_title=req.module_title, module_code=req.module_code)
+    result = parser.parse_sections(
+        [(doc, "pasted text") for doc in sections],
+        use_llm=req.use_llm,
+        default_program=req.program,
+        default_year=req.academic_year,
+        overrides=overrides,
     )
-    result = parser.parse_document(doc, use_llm=req.use_llm, overrides=overrides)
     return _finalize(result, req.persist, req.program, req.academic_year)
+
+
+async def _read_sections(file: UploadFile) -> list[tuple[parser.DocumentContent, str]]:
+    name = file.filename or "upload"
+    data = await file.read()
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"{name} exceeds the 15 MB limit.")
+    try:
+        return [(doc, name) for doc in parser.read_upload_sections(name, data)]
+    except ValueError as exc:
+        raise HTTPException(415, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(422, f"Could not read {name}: {exc}") from exc
 
 
 @router.post("/ingest/file", response_model=ParseResponse, tags=["ingestion"])
@@ -106,24 +138,38 @@ async def ingest_file(
     persist: bool = Form(False),
     use_llm: bool = Form(True),
 ):
-    data = await file.read()
-    if len(data) > MAX_UPLOAD_BYTES:
-        raise HTTPException(413, "File exceeds 15 MB limit.")
-    try:
-        doc = parser.read_upload(file.filename or "upload", data)
-    except ValueError as exc:
-        raise HTTPException(415, str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(422, f"Could not read document: {exc}") from exc
-
     from starlette.concurrency import run_in_threadpool
 
-    result = await run_in_threadpool(parser.parse_document, doc, use_llm)
-    if result.meta.program is None:
-        result.meta.program = program
-    if result.meta.academic_year is None:
-        result.meta.academic_year = academic_year
-    return _finalize(result, persist, result.meta.program, result.meta.academic_year)
+    sections = await _read_sections(file)
+    result = await run_in_threadpool(parser.parse_sections, sections, use_llm, program, academic_year)
+    return _finalize(result, persist, result.meta.program or program, result.meta.academic_year or academic_year)
+
+
+@router.post("/ingest/batch", response_model=ParseResponse, tags=["ingestion"])
+async def ingest_batch(
+    files: list[UploadFile] = File(..., description="Timetables for one or more classes (.docx/.xlsx/.txt)"),
+    program: str = Form("MBBS"),
+    academic_year: int = Form(2),
+    persist: bool = Form(False),
+    use_llm: bool = Form(True),
+):
+    """Upload timetables for several classes at once (e.g. MBBS 1-5 and BDS 1-5).
+
+    Each file's class is read from its 'TIMETABLE FOR <N> YEAR MBBS|BDS' header, then its file
+    name ('BDS_Year1.txt'), then the form defaults. The response lists every class in `cohorts`
+    and tags each topic with its `cohort`.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    if not files:
+        raise HTTPException(400, "Upload at least one file.")
+    if len(files) > MAX_BATCH_FILES:
+        raise HTTPException(413, f"Upload at most {MAX_BATCH_FILES} files at once.")
+    sections: list[tuple[parser.DocumentContent, str]] = []
+    for f in files:
+        sections.extend(await _read_sections(f))
+    result = await run_in_threadpool(parser.parse_sections, sections, use_llm, program, academic_year)
+    return _finalize(result, persist, result.meta.program or program, result.meta.academic_year or academic_year)
 
 
 @router.get("/departments", response_model=list[Department], tags=["reference"])
@@ -232,19 +278,55 @@ class GenerateScheduleRequest(BaseModel):
     academic_year: int = 2
     week_number: int = 1
     time_limit_seconds: float = 10.0
+    cohort: Optional[str] = Field(default=None, description="Only schedule this class, e.g. 'MBBS-2'")
 
 
 @router.post("/schedule/generate", response_model=solver.TimetableSchedule, tags=["scheduling"])
 def generate_schedule(req: GenerateScheduleRequest):
-    return solver.solve_schedule(
-        topics=req.topics,
-        approved_links=req.approved_links,
-        module_code=req.module_code,
-        module_title=req.module_title,
-        academic_year=req.academic_year,
-        week_number=req.week_number,
-        time_limit_seconds=req.time_limit_seconds,
+    try:
+        return solver.solve_schedule(
+            topics=req.topics,
+            approved_links=req.approved_links,
+            module_code=req.module_code,
+            module_title=req.module_title,
+            academic_year=req.academic_year,
+            week_number=req.week_number,
+            time_limit_seconds=req.time_limit_seconds,
+            cohort=req.cohort,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+class GenerateAllRequest(BaseModel):
+    topics: list[ParsedTopic]
+    approved_links: list[integrator.ProposedLink] = []
+    module_code: str = "MODULE-01"
+    module_title: str = "INTEGRATED MODULE"
+    week_number: int = 1
+    cohorts: Optional[list[str]] = Field(default=None, description="Defaults to every class in `topics`")
+    cohort_modules: dict[str, solver.CohortModule] = Field(
+        default_factory=dict, description="Per-class module title/code, e.g. {'MBBS-4': {...}}"
     )
+    time_limit_seconds: float = Field(default=8.0, description="Solver budget shared by all classes")
+
+
+@router.post("/schedule/generate-all", response_model=solver.MultiCohortSchedule, tags=["scheduling"])
+def generate_all_schedules(req: GenerateAllRequest):
+    """Solve one week for every class at once; a teacher shared by classes is never double-booked."""
+    try:
+        return solver.solve_all_cohorts(
+            topics=req.topics,
+            approved_links=req.approved_links,
+            module_code=req.module_code,
+            module_title=req.module_title,
+            week_number=req.week_number,
+            cohorts=req.cohorts,
+            time_limit_seconds=req.time_limit_seconds,
+            cohort_modules=req.cohort_modules,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @router.post("/schedule/original", response_model=solver.TimetableSchedule, tags=["scheduling"])
@@ -255,6 +337,34 @@ def get_original_uploaded_schedule(req: GenerateScheduleRequest):
         module_title=req.module_title,
         academic_year=req.academic_year,
         week_number=req.week_number,
+        cohort=req.cohort,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Module-wide analytics report (all weeks, all classes)
+# ---------------------------------------------------------------------------
+
+
+class ReportRequest(BaseModel):
+    topics: list[ParsedTopic]
+    links: list[integrator.ProposedLink] = []
+    schedules: list[solver.TimetableSchedule] = []
+
+
+@router.post("/analytics/report", response_model=analytics.CurriculumReport, tags=["analytics"])
+def analytics_report(req: ReportRequest):
+    """Classes per subject, coverage per topic and teacher load across the whole upload."""
+    return analytics.build_report(req.topics, req.links, req.schedules)
+
+
+@router.post("/export/report-docx", tags=["export"])
+def export_report_docx(req: ReportRequest):
+    report = analytics.build_report(req.topics, req.links, req.schedules)
+    return Response(
+        content=exporter.generate_report_docx(report),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": 'attachment; filename="Curriculum_Report.docx"'},
     )
 
 
@@ -465,7 +575,8 @@ def export_docx(req: ExportDocxRequest):
         schedule=req.schedule,
         legend_entries=req.legend_entries,
     )
-    filename = f"Timetable_{req.schedule.module_code}_Week{req.schedule.week_number:02d}.docx"
+    cohort = f"{req.schedule.cohort}_" if req.schedule.cohort else ""
+    filename = f"Timetable_{cohort}{req.schedule.module_code}_Week{req.schedule.week_number:02d}.docx"
     return Response(
         content=docx_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",

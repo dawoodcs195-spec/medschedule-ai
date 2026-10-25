@@ -53,3 +53,5 @@ jobs:
         run: python -c "from app.main import app; print(app.title)"
       - name: End-to-end smoke test (offline, no DB / no API key)
         run: python tests/smoke_full_pipeline.py
+      - name: Client requirement tests (multi-class upload, integration, copilot, report)
+        run: python tests/test_client_requirements.py

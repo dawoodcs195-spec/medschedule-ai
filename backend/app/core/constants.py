@@ -84,15 +84,45 @@ DISCIPLINE_ALIASES: dict[str, str] = {
     "COMMUNITY MEDICINE": "Community Medicine",
     "ORAL & MAXILLOFACIAL SURGERY": "Oral & Maxillofacial Surgery",
     "SKILL LAB": "Skill Lab",
+    "OPHTHAL": "Ophthalmology",
+    "OPHTH": "Ophthalmology",
+    "OPHTHALMOLOGY (EYE)": "Ophthalmology",
+    "GEN SURGERY": "Surgery",
+    "GENERAL SURGERY": "Surgery",
+    "GEN MEDICINE": "Medicine",
+    "GENERAL MEDICINE": "Medicine",
+    "PATH": "Pathology",
+    "PHARMA": "Pharmacology",
+    "PHARMAC": "Pharmacology",
+    "GYNAE": "Obstetrics & Gynaecology",
+    "OBGYN": "Obstetrics & Gynaecology",
+    "OBS & GYNAE": "Obstetrics & Gynaecology",
+    "FORENSIC MEDICINE": "Forensic Medicine",
+    "FORENSIC": "Forensic Medicine",
+    # BDS (dental) departments
+    "ORAL BIOLOGY": "Oral Biology",
+    "TOOTH MORPHOLOGY": "Oral Biology",
+    "DENTAL ANATOMY": "Oral Biology",
+    "DENTAL MATERIALS": "Dental Materials",
+    "SCIENCE OF DENTAL MATERIALS": "Dental Materials",
+    "ORAL PATHOLOGY": "Oral Pathology",
+    "ORAL MEDICINE": "Oral Medicine",
+    "PERIODONTOLOGY": "Periodontology",
+    "PROSTHODONTICS": "Prosthodontics",
+    "OPERATIVE DENTISTRY": "Operative Dentistry",
+    "ORTHODONTICS": "Orthodontics",
+    "OMFS": "Oral & Maxillofacial Surgery",
 }
 
 BASIC_SCIENCES = {
     "Anatomy", "Gross Anatomy", "Neuroanatomy", "Histology", "Embryology",
-    "Physiology", "Biochemistry",
+    "Physiology", "Biochemistry", "Oral Biology", "Dental Materials",
 }
 CLINICAL_DISCIPLINES = {
     "Surgery", "Medicine", "ENT", "Ophthalmology", "Pediatrics", "Radiology",
     "Pathology", "Pharmacology", "Community Medicine", "Oral & Maxillofacial Surgery",
+    "Obstetrics & Gynaecology", "Forensic Medicine", "Oral Pathology", "Oral Medicine",
+    "Periodontology", "Prosthodontics", "Operative Dentistry", "Orthodontics",
 }
 
 DEFAULT_DURATION_MINUTES = {
@@ -135,12 +165,69 @@ def is_discipline_label(raw: str) -> bool:
 
 def discipline_category(discipline: str) -> str:
     """Return the UI colour category for a discipline (AGENTS.md §5 palette)."""
-    if discipline in {"Anatomy", "Gross Anatomy", "Neuroanatomy", "Histology", "Embryology"}:
+    if discipline in {"Anatomy", "Gross Anatomy", "Neuroanatomy", "Histology", "Embryology", "Oral Biology"}:
         return "ANATOMY"
     if discipline == "Physiology":
         return "PHYSIOLOGY"
-    if discipline == "Biochemistry":
+    if discipline in {"Biochemistry", "Dental Materials"}:
         return "BIOCHEMISTRY"
     if discipline in CLINICAL_DISCIPLINES:
         return "CLINICAL"
     return "INSTITUTIONAL"
+
+
+# ---------------------------------------------------------------------------
+# Cohorts (one cohort = one class, e.g. 2nd Year MBBS) & teaching sequence
+# ---------------------------------------------------------------------------
+PROGRAMS = ("MBBS", "BDS")
+MAX_PROGRAM_YEARS = {"MBBS": 5, "BDS": 5}
+
+_ORDINALS = {1: "1st", 2: "2nd", 3: "3rd"}
+
+
+def cohort_key(program: str | None, academic_year: int | None) -> str:
+    """Stable cohort identifier, e.g. ('MBBS', 2) -> 'MBBS-2'."""
+    prog = (program or "MBBS").strip().upper()
+    return f"{prog}-{int(academic_year or 1)}"
+
+
+def cohort_label(key: str) -> str:
+    """Human label for a cohort key, e.g. 'MBBS-2' -> '2nd Year MBBS'."""
+    prog, _, year = key.partition("-")
+    try:
+        y = int(year)
+    except ValueError:
+        return key
+    return f"{_ORDINALS.get(y, f'{y}th')} Year {prog}"
+
+
+# Logical teaching order used when integrating linked topics: structure before function,
+# function before disease, disease before management. Lower rank is taught first.
+DISCIPLINE_SEQUENCE_RANK: dict[str, int] = {
+    "Embryology": 0,
+    "Anatomy": 1,
+    "Gross Anatomy": 1,
+    "Neuroanatomy": 1,
+    "Histology": 2,
+    "Physiology": 3,
+    "Biochemistry": 4,
+    "Pathology": 5,
+    "Pharmacology": 6,
+    "Community Medicine": 7,
+    "Medicine": 8,
+    "Pediatrics": 9,
+    "Radiology": 10,
+    "Surgery": 11,
+    "Ophthalmology": 12,
+    "ENT": 12,
+    "Oral & Maxillofacial Surgery": 12,
+    "Oral Biology": 2,
+    "Dental Materials": 4,
+    "Oral Pathology": 5,
+    "Obstetrics & Gynaecology": 11,
+}
+DEFAULT_SEQUENCE_RANK = 7
+
+
+def sequence_rank(discipline: str) -> int:
+    return DISCIPLINE_SEQUENCE_RANK.get(discipline, DEFAULT_SEQUENCE_RANK)

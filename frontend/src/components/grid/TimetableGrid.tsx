@@ -20,6 +20,7 @@ import {
   FileSpreadsheet,
   GripVertical,
   LayoutGrid,
+  Link2,
   List,
   MapPin,
   Plus,
@@ -634,6 +635,16 @@ export const TimetableGrid: React.FC<TimetableGridProps> = ({
                   </div>
 
                   <p className="text-sm font-semibold leading-snug break-words">{cell.topic_title}</p>
+                  {cell.integration_tags && cell.integration_tags.length > 0 && (
+                    <ul className="mt-1 space-y-0.5 text-[11px] opacity-80">
+                      {cell.integration_tags.slice(0, 3).map((tag) => (
+                        <li key={tag} className="flex items-start gap-1">
+                          <Link2 className="mt-0.5 size-3 shrink-0" />
+                          <span className="break-words">{tag}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
 
                   {cell.batch_assignments && cell.batch_assignments.length > 0 ? (
                     <div className="mt-2 pt-1.5 border-t border-black/10 dark:border-white/10 grid grid-cols-2 gap-1 text-[11px] font-mono">
@@ -1214,6 +1225,7 @@ const DraggableCellCard: React.FC<{
         </div>
 
         <p className="text-xs font-semibold leading-snug line-clamp-2">{cell.topic_title}</p>
+        <IntegrationChip cell={cell} />
       </div>
 
       <div className="mt-1.5 pt-1 border-t border-black/5 dark:border-white/10 space-y-0.5 text-[10px]">
@@ -1244,5 +1256,22 @@ const DraggableCellCard: React.FC<{
         )}
       </div>
     </div>
+  );
+};
+
+/** Small badge showing which integrated topic group a lecture belongs to (hover for its links). */
+const IntegrationChip: React.FC<{ cell: ScheduledCell }> = ({ cell }) => {
+  const tags = cell.integration_tags ?? [];
+  if (!cell.integration_group && tags.length === 0) return null;
+  const label = cell.integration_group ?? (tags[0]?.startsWith("↕") ? "Vertical link" : "Linked");
+  return (
+    <span
+      title={tags.join("\n") || label}
+      className="mt-1 inline-flex max-w-full items-center gap-0.5 whitespace-nowrap rounded-full border border-current/20 bg-white/55 px-1.5 py-px text-[9px] font-semibold dark:bg-black/20"
+    >
+      <Link2 className="size-2.5 shrink-0" />
+      <span className="min-w-0 truncate">{label}</span>
+      {tags.length > 0 && <span className="shrink-0 opacity-70">· {tags.length}</span>}
+    </span>
   );
 };

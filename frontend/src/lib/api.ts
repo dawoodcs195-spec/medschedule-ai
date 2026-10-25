@@ -1,8 +1,10 @@
 import {
   CopilotChatResponse,
+  CurriculumReport,
   Department,
   IntegrationClusterResult,
   LegendEntry,
+  MultiCohortSchedule,
   ParsedTopic,
   ParseResponse,
   ProposedLink,
@@ -60,6 +62,25 @@ export async function ingestFile(
     method: "POST",
     body: formData,
   });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+/** Upload timetables for several classes at once (e.g. MBBS 1–5 and BDS 1–5). */
+export async function ingestFiles(
+  files: File[],
+  program = "MBBS",
+  academic_year = 2,
+  use_llm = true,
+  persist = true
+): Promise<ParseResponse> {
+  const formData = new FormData();
+  files.forEach((f) => formData.append("files", f));
+  formData.append("program", program);
+  formData.append("academic_year", academic_year.toString());
+  formData.append("use_llm", use_llm.toString());
+  formData.append("persist", persist.toString());
+  const res = await fetch(`${API_BASE}/ingest/batch`, { method: "POST", body: formData });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -123,6 +144,7 @@ export async function generateSchedule(params: {
   module_title: string;
   academic_year: number;
   week_number: number;
+  cohort?: string | null;
 }): Promise<TimetableSchedule> {
   const res = await fetch(`${API_BASE}/schedule/generate`, {
     method: "POST",
@@ -139,6 +161,7 @@ export async function generateOriginalSchedule(params: {
   module_title: string;
   academic_year: number;
   week_number: number;
+  cohort?: string | null;
 }): Promise<TimetableSchedule> {
   const res = await fetch(`${API_BASE}/schedule/original`, {
     method: "POST",
@@ -147,6 +170,54 @@ export async function generateOriginalSchedule(params: {
   });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
+}
+
+/** Solve one week for every class; shared teachers are never double-booked when avoidable. */
+export async function generateAllSchedules(params: {
+  topics: ParsedTopic[];
+  approved_links: ProposedLink[];
+  module_code: string;
+  module_title: string;
+  week_number: number;
+  cohorts?: string[];
+  cohort_modules?: Record<string, { module_title?: string | null; module_code?: string | null }>;
+}): Promise<MultiCohortSchedule> {
+  const res = await fetch(`${API_BASE}/schedule/generate-all`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+/** Module-wide report: classes per subject, topic coverage and teacher load. */
+export async function getCurriculumReport(params: {
+  topics: ParsedTopic[];
+  links: ProposedLink[];
+  schedules: TimetableSchedule[];
+}): Promise<CurriculumReport> {
+  const res = await fetch(`${API_BASE}/analytics/report`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function downloadReportDocx(params: {
+  topics: ParsedTopic[];
+  links: ProposedLink[];
+  schedules: TimetableSchedule[];
+}): Promise<Blob> {
+  const res = await fetch(`${API_BASE}/export/report-docx`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.blob();
 }
 
 export async function validateSlotMove(params: {

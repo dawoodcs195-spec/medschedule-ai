@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import io
 import logging
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import docx
 from docx.enum.section import WD_ORIENT
@@ -33,7 +33,16 @@ from app.core.constants import DAYS, FRIDAY
 from app.models.schemas import LegendEntry
 from app.services.solver import ScheduledCell, TimetableSchedule
 
+if TYPE_CHECKING:
+    from app.services.analytics import CurriculumReport
+
 logger = logging.getLogger(__name__)
+
+def _ordinal(n: int) -> str:
+    """2 -> '2ND', 11 -> '11TH' (matches the client's header style)."""
+    suffix = "TH" if 10 <= n % 100 <= 20 else {1: "ST", 2: "ND", 3: "RD"}.get(n % 10, "TH")
+    return f"{n}{suffix}"
+
 
 # Column widths in DXA (Total = 15,681 DXA = 10.89 inches)
 COL_WIDTHS_DXA = [1681, 2333, 2333, 2333, 2333, 1200, 3468]
@@ -96,6 +105,8 @@ def generate_landscape_docx(
     legend_entries: list[LegendEntry] = [],
 ) -> bytes:
     """Generate a single-page landscape Microsoft Word (.docx) document."""
+    if schedule.cohort:  # keep only this class's practical/SGD keys in a multi-class upload
+        legend_entries = [e for e in legend_entries if not e.cohort or e.cohort == schedule.cohort]
     doc = docx.Document()
 
     # 1. Page Setup: A4 Landscape, 0.4" margins
@@ -113,7 +124,7 @@ def generate_landscape_docx(
     p_hdr1.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p_hdr1.paragraph_format.space_before = Pt(0)
     p_hdr1.paragraph_format.space_after = Pt(1)
-    run1 = p_hdr1.add_run(f"TIMETABLE FOR {schedule.academic_year}ND YEAR MBBS")
+    run1 = p_hdr1.add_run(f"TIMETABLE FOR {_ordinal(schedule.academic_year)} YEAR {schedule.program.upper()}")
     run1.font.name = "Arial"
     run1.font.size = Pt(11)
     run1.font.bold = True
@@ -369,6 +380,92 @@ def generate_landscape_docx(
         r_leg.font.name = "Arial"
         r_leg.font.size = Pt(6)
         r_leg.font.color.rgb = RGBColor(71, 85, 105)
+
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    return buffer.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# Curriculum report (.docx): classes per subject, teacher load, topic coverage
+# ---------------------------------------------------------------------------
+
+
+def _report_table(doc: "docx.Document", headers: list[str], rows: list[list[str]], widths: list[float]) -> None:
+    table = doc.add_table(rows=1, cols=len(headers))
+    table.style = "Table Grid"
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    for i, h in enumerate(headers):
+        cell = table.rows[0].cells[i]
+        set_cell_xml_properties(cell, int(widths[i] * 1440), "CCFBF1")
+        run = cell.paragraphs[0].add_run(h)
+        run.font.bold = True
+        run.font.size = Pt(8)
+        run.font.name = "Arial"
+    for values in rows:
+        cells = table.add_row().cells
+        for i, v in enumerate(values):
+            set_cell_xml_properties(cells[i], int(widths[i] * 1440), "FFFFFF")
+            run = cells[i].paragraphs[0].add_run(v)
+            run.font.size = Pt(7.5)
+            run.font.name = "Arial"
+
+
+def _heading(doc: "docx.Document", text: str, size: float = 11) -> None:
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(8)
+    p.paragraph_format.space_after = Pt(3)
+    r = p.add_run(text)
+    r.font.bold = True
+    r.font.size = Pt(size)
+    r.font.name = "Arial"
+    r.font.color.rgb = RGBColor(15, 118, 110)
+
+
+def generate_report_docx(report: "CurriculumReport") -> bytes:
+    """Landscape A4 report: totals, classes per subject, classes per teacher, topic coverage."""
+    doc = docx.Document()
+    section = doc.sections[0]
+    section.orientation = WD_ORIENT.LANDSCAPE
+    section.page_width, section.page_height = Inches(11.69), Inches(8.27)
+    for side in ("top_margin", "bottom_margin", "left_margin", "right_margin"):
+        setattr(section, side, Inches(0.5))
+
+    _heading(doc, "CURRICULUM INTEGRATION & TEACHING LOAD REPORT", 13)
+    t = report.totals
+    p = doc.add_paragraph(
+        f"{t.cohorts} class(es) · {t.subjects} subjects · {t.topics} topics · {t.classes} classes · "
+        f"{t.contact_hours} contact hours · {t.teachers} teachers · "
+        f"{t.horizontal_links} horizontal and {t.vertical_links} vertical integration links"
+    )
+    p.runs[0].font.size = Pt(9)
+
+    _heading(doc, "Classes per subject")
+    _report_table(
+        doc,
+        ["Class", "Subject", "Classes", "Topics", "Hours", "Integrated topics", "Teachers"],
+        [[s.cohort_label or "-", s.discipline, str(s.classes), str(s.topics), f"{s.contact_hours:g}",
+          str(s.integrated_topics), ", ".join(s.teachers) or "-"] for s in report.subjects],
+        [1.3, 1.6, 0.7, 0.7, 0.7, 1.1, 4.5],
+    )
+
+    _heading(doc, "Classes per teacher (teaching load)")
+    _report_table(
+        doc,
+        ["Teacher", "Classes", "Hours", "Subjects", "Classes taught to"],
+        [[tc.faculty, str(tc.classes), f"{tc.contact_hours:g}", ", ".join(tc.subjects), ", ".join(tc.cohorts) or "-"]
+         for tc in report.teachers],
+        [2.2, 0.8, 0.8, 3.0, 3.8],
+    )
+
+    _heading(doc, "Topic coverage")
+    _report_table(
+        doc,
+        ["Class", "Subject", "Topic", "Type", "Times covered", "Links (H / V)", "Teacher(s)"],
+        [[c.cohort or "-", c.discipline, c.topic, c.session_type, str(c.times_covered),
+          f"{c.horizontal_links} / {c.vertical_links}", ", ".join(c.faculty) or "-"] for c in report.topics],
+        [0.8, 1.4, 3.4, 0.8, 0.9, 0.9, 2.4],
+    )
 
     buffer = io.BytesIO()
     doc.save(buffer)
