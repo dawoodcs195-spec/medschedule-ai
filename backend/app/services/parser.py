@@ -17,11 +17,12 @@ from typing import Any, Iterable
 
 from app.core.config import settings
 from app.core.constants import (
-    DEFAULT_DURATION_MINUTES, discipline_category, is_discipline_label, normalize_discipline,
+    DEFAULT_DURATION_MINUTES, cohort_key, cohort_label, discipline_category, is_discipline_label,
+    normalize_discipline,
 )
 from app.core.gemini import gemini_enabled, get_gemini_client
 from app.models.schemas import (
-    ExtractedModuleMeta, ExtractedTopic, LegendEntry, ParsedTopic, ParseResponse,
+    CohortSummary, ExtractedModuleMeta, ExtractedTopic, LegendEntry, ParsedTopic, ParseResponse,
     SessionType, SyllabusExtraction,
 )
 
@@ -37,8 +38,13 @@ MAX_LLM_CHARS = 180_000
 @dataclass
 class DocumentContent:
     paragraphs: list[str] = field(default_factory=list)
-    cells: list[str] = field(default_factory=list)  # de-duplicated table cell texts (multi-line)
+    # One entry per physical table cell (merged cells counted once), so a topic taught twice
+    # appears twice and its coverage can be counted.
+    cells: list[str] = field(default_factory=list)
     cell_coords: dict[str, tuple[int, int, str, str]] = field(default_factory=dict)
+    program: str | None = None  # cohort hint from a section header, e.g. 'MBBS'
+    academic_year: int | None = None
+    source: str | None = None
 
     def to_text(self) -> str:
         parts = list(self.paragraphs)
@@ -90,70 +96,186 @@ def _unique_cells(rows: Iterable[Iterable[Any]]) -> list[str]:
     return out
 
 
-def read_docx(data: bytes) -> DocumentContent:
+def _header_cohort(text: str) -> tuple[str, int] | None:
+    if m := HEADER_YEAR_RE.search(text):
+        return m.group(2).upper(), int(m.group(1))
+    return None
+
+
+def _header_week(text: str) -> int | None:
+    m = WEEK_RE.search(text)
+    return int(m.group(1)) if m else None
+
+
+class _SectionBuilder:
+    """Accumulates paragraphs/tables per class (cohort) while walking a document in order."""
+
+    def __init__(self, source: str | None):
+        self.source = source
+        self.sections: dict[tuple[str, int] | None, DocumentContent] = {}
+        self.tables_seen: dict[tuple[str, int] | None, int] = {}
+        self.current: tuple[str, int] | None = None
+        self.current_week: int | None = None
+
+    def section(self) -> DocumentContent:
+        key = self.current
+        if key not in self.sections:
+            self.sections[key] = DocumentContent(
+                program=key[0] if key else None,
+                academic_year=key[1] if key else None,
+                source=self.source,
+            )
+        return self.sections[key]
+
+    def add_paragraph(self, text: str) -> None:
+        if not text:
+            return
+        if (cohort := _header_cohort(text)) is not None:
+            if cohort != self.current:
+                self.current, self.current_week = cohort, None
+        if (week := _header_week(text)) is not None:
+            self.current_week = week
+        self.section().paragraphs.append(text)
+
+    def next_week_number(self) -> int:
+        count = self.tables_seen.get(self.current, 0) + 1
+        self.tables_seen[self.current] = count
+        week = self.current_week or count
+        self.current_week = None
+        return week
+
+    def add_row(self, row_texts: list[str], week_num: int, cell_keys: list[Any], seen: set[Any]) -> None:
+        doc = self.section()
+        first_upper = row_texts[0].upper() if row_texts else ""
+        day_num = next((d for name, d in _ROW_DAY_MAP.items() if first_upper.startswith(name)), None)
+        for c_idx, text in enumerate(row_texts):
+            if not text or cell_keys[c_idx] in seen:
+                continue
+            seen.add(cell_keys[c_idx])
+            doc.cells.append(text)
+            if day_num is not None and c_idx >= 1 and text not in doc.cell_coords:
+                t_start, t_end = _infer_col_slot(row_texts, c_idx)
+                doc.cell_coords[text] = (week_num, day_num, t_start, t_end)
+
+    def result(self) -> list[DocumentContent]:
+        docs = [d for d in self.sections.values() if d.paragraphs or d.cells]
+        # Content before the first header belongs to the first real class.
+        if None in self.sections and len(docs) > 1:
+            orphan = self.sections[None]
+            first = next(d for k, d in self.sections.items() if k is not None)
+            first.paragraphs[:0] = orphan.paragraphs
+            first.cells[:0] = orphan.cells
+            docs = [d for d in docs if d is not orphan]
+        return docs or [DocumentContent(source=self.source)]
+
+
+def read_docx_sections(data: bytes, source: str | None = None) -> list[DocumentContent]:
     import docx  # python-docx
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
 
     document = docx.Document(io.BytesIO(data))
-    paragraphs = [p.text.strip() for p in document.paragraphs if p.text.strip()]
-    cells: list[str] = []
-    cell_coords: dict[str, tuple[int, int, str, str]] = {}
-    for t_idx, table in enumerate(document.tables):
-        week_num = t_idx + 1
-        for row in table.rows:
-            row_texts = [(c.text or "").strip() for c in row.cells]
-            if not row_texts:
-                continue
-            first_upper = row_texts[0].upper()
-            day_num = next((d for name, d in _ROW_DAY_MAP.items() if first_upper.startswith(name)), None)
-            for c_idx, text in enumerate(row_texts):
-                if not text:
-                    continue
-                if text not in cells:
-                    cells.append(text)
-                if day_num is not None and c_idx >= 1 and text not in cell_coords:
-                    t_start, t_end = _infer_col_slot(row_texts, c_idx)
-                    cell_coords[text] = (week_num, day_num, t_start, t_end)
-    return DocumentContent(paragraphs=paragraphs, cells=cells, cell_coords=cell_coords)
+    builder = _SectionBuilder(source)
+    for child in document.element.body.iterchildren():
+        tag = child.tag.rsplit("}", 1)[-1]
+        if tag == "p":
+            builder.add_paragraph(Paragraph(child, document).text.strip())
+        elif tag == "tbl":
+            table = Table(child, document)
+            week_num = builder.next_week_number()
+            # Merged cells share one <w:tc> element; holding the elements in `seen` keeps their
+            # lxml proxies alive, so identity comparison is reliable across rows.
+            seen: set[Any] = set()
+            for row in table.rows:
+                cells = row.cells
+                builder.add_row([(c.text or "").strip() for c in cells], week_num, [c._tc for c in cells], seen)
+    return builder.result()
 
 
-def read_xlsx(data: bytes) -> DocumentContent:
+def read_docx(data: bytes) -> DocumentContent:
+    return _merge_sections(read_docx_sections(data))
+
+
+def read_xlsx_sections(data: bytes, source: str | None = None) -> list[DocumentContent]:
     from openpyxl import load_workbook
 
     wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
-    cells: list[str] = []
-    cell_coords: dict[str, tuple[int, int, str, str]] = {}
-    for w_idx, ws in enumerate(wb.worksheets):
-        week_num = w_idx + 1
-        for row in ws.iter_rows(values_only=True):
-            row_texts = [str(v or "").strip() for v in row]
-            if not row_texts:
+    builder = _SectionBuilder(source)
+    for ws in wb.worksheets:
+        rows = [[str(v or "").strip() for v in row] for row in ws.iter_rows(values_only=True)]
+        # Title rows above the grid ("TIMETABLE FOR 4TH YEAR MBBS", module/week line, legend keys)
+        for row in rows:
+            non_empty = [t for t in row if t]
+            if len(non_empty) == 1 and not _ROW_DAY_MAP.get(non_empty[0].split()[0].upper() if non_empty[0] else ""):
+                builder.add_paragraph(non_empty[0])
+        week_num = builder.next_week_number()
+        seen: set[Any] = set()
+        for r_idx, row in enumerate(rows):
+            if len([t for t in row if t]) <= 1 and not (row and row[0].upper() in _ROW_DAY_MAP):
                 continue
-            first_upper = row_texts[0].upper()
-            day_num = next((d for name, d in _ROW_DAY_MAP.items() if first_upper.startswith(name)), None)
-            for c_idx, text in enumerate(row_texts):
-                if not text:
-                    continue
-                if text not in cells:
-                    cells.append(text)
-                if day_num is not None and c_idx >= 1 and text not in cell_coords:
-                    t_start, t_end = _infer_col_slot(row_texts, c_idx)
-                    cell_coords[text] = (week_num, day_num, t_start, t_end)
-    return DocumentContent(cells=cells, cell_coords=cell_coords)
+            builder.add_row(row, week_num, [(r_idx, c) for c in range(len(row))], seen)
+    return builder.result()
+
+
+def read_xlsx(data: bytes) -> DocumentContent:
+    return _merge_sections(read_xlsx_sections(data))
+
+
+def read_text_sections(data: str, source: str | None = None) -> list[DocumentContent]:
+    builder = _SectionBuilder(source)
+    for line in data.splitlines():
+        builder.add_paragraph(line.strip())
+    return builder.result()
 
 
 def read_text(data: str) -> DocumentContent:
     return DocumentContent(paragraphs=[ln.strip() for ln in data.splitlines() if ln.strip()])
 
 
-def read_upload(filename: str, data: bytes) -> DocumentContent:
+def _merge_sections(sections: list[DocumentContent]) -> DocumentContent:
+    merged = DocumentContent(source=sections[0].source if sections else None)
+    for sec in sections:
+        merged.paragraphs.extend(sec.paragraphs)
+        merged.cells.extend(sec.cells)
+        for k, v in sec.cell_coords.items():
+            merged.cell_coords.setdefault(k, v)
+    if len({(s.program, s.academic_year) for s in sections}) == 1 and sections:
+        merged.program, merged.academic_year = sections[0].program, sections[0].academic_year
+    return merged
+
+
+def read_upload_sections(filename: str, data: bytes) -> list[DocumentContent]:
+    """Read a file and split it into one DocumentContent per class header it contains."""
     name = filename.lower()
     if name.endswith(".docx"):
-        return read_docx(data)
+        return read_docx_sections(data, filename)
     if name.endswith((".xlsx", ".xlsm")):
-        return read_xlsx(data)
+        return read_xlsx_sections(data, filename)
     if name.endswith((".txt", ".md", ".csv")):
-        return read_text(data.decode("utf-8", errors="replace"))
+        return read_text_sections(data.decode("utf-8", errors="replace"), filename)
     raise ValueError(f"Unsupported file type: {filename}. Use .docx, .xlsx, or .txt")
+
+
+def read_upload(filename: str, data: bytes) -> DocumentContent:
+    return _merge_sections(read_upload_sections(filename, data))
+
+
+_FILENAME_PROGRAM_RE = re.compile(r"(MBBS|BDS)", re.I)
+_FILENAME_YEAR_RE = re.compile(
+    r"(?:year|yr)[\s_.-]*([1-5])(?![0-9])|(?<![0-9])([1-5])(?:st|nd|rd|th)?[\s_.-]*(?:year|yr)", re.I
+)
+
+
+def cohort_from_filename(filename: str | None) -> tuple[str | None, int | None]:
+    """Best-effort class hint from names like 'MBBS_Year4.xlsx' or '1st year BDS.docx'."""
+    if not filename:
+        return None, None
+    prog = _FILENAME_PROGRAM_RE.search(filename)
+    year = _FILENAME_YEAR_RE.search(filename)
+    return (
+        prog.group(1).upper() if prog else None,
+        int(year.group(1) or year.group(2)) if year else None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +286,8 @@ _NAME_TOKEN = r"[A-Z](?:\.|[a-z][A-Za-z]*)"
 FACULTY_RE = re.compile(
     rf"\b(?:Dr|Prof)\.?[ \t]*{_NAME_TOKEN}(?:(?:[ \t]+|(?<=\.)[ \t]*){_NAME_TOKEN}){{0,3}}"
 )
-HEADER_YEAR_RE = re.compile(r"TIMETABLE FOR\s+(\d)(?:ST|ND|RD|TH)\s+YEAR\s+(MBBS|BDS)", re.I)
+HEADER_YEAR_RE = re.compile(r"TIMETABLE\s+FOR\s+(\d)\s*(?:ST|ND|RD|TH)?\s+YEAR\s+(MBBS|BDS)", re.I)
+WEEK_RE = re.compile(r"\(WEEK[-\s]?0*(\d+)\)", re.I)
 HEADER_MODULE_RE = re.compile(
     r"^(?P<title>.+?)\s*\((?P<code>MODULE-\d+)\)(?:\s*\(WEEK-\d+\))?(?:\s*\(SESSION\s+(?P<session>[\d-]+)\))?",
     re.I,
@@ -421,14 +544,17 @@ def gemini_extract(text: str) -> SyllabusExtraction:
 
 
 def normalize(extraction: SyllabusExtraction) -> list[ParsedTopic]:
+    """Canonicalise disciplines and merge repeats into one topic with an ``occurrences`` count."""
     out: list[ParsedTopic] = []
-    seen: set[tuple[str, str, str]] = set()
+    seen: dict[tuple[str, str, str], ParsedTopic] = {}
     for t in extraction.topics:
         canonical = normalize_discipline(t.discipline)
         key = (t.topic_title.strip().lower(), canonical, t.session_type.value)
         if key in seen:
+            # Legend-derived practicals repeat per week by design; only lectures count as re-teaching.
+            if not t.practical_code:
+                seen[key].occurrences += 1
             continue
-        seen.add(key)
         out.append(ParsedTopic(
             **t.model_dump(exclude={"discipline", "duration_minutes"}),
             discipline=canonical,
@@ -436,6 +562,7 @@ def normalize(extraction: SyllabusExtraction) -> list[ParsedTopic]:
             category=discipline_category(canonical),
             duration_minutes=t.duration_minutes or DEFAULT_DURATION_MINUTES[t.session_type.value],
         ))
+        seen[key] = out[-1]
     return out
 
 
@@ -470,15 +597,24 @@ def parse_document(doc: DocumentContent, use_llm: bool = True,
     elif extraction is None:
         extraction = heuristic_res
 
-    # Header metadata: explicit overrides > LLM > regex.
+    # Header metadata. The document's own class header ("TIMETABLE FOR 2ND YEAR MBBS") wins for
+    # programme/year, so multi-class uploads are never relabelled by the form defaults; explicit
+    # module title/code overrides still win.
     meta = parse_header(doc.paragraphs)
     for fld, value in extraction.meta.model_dump().items():
-        if value is not None:
+        if value is not None and getattr(meta, fld) is None:
             setattr(meta, fld, value)
+    if doc.program:
+        meta.program = doc.program
+    if doc.academic_year:
+        meta.academic_year = doc.academic_year
     if overrides:
         for fld, value in overrides.model_dump().items():
-            if value is not None:
-                setattr(meta, fld, value)
+            if value is None:
+                continue
+            if fld in ("program", "academic_year") and getattr(meta, fld) is not None:
+                continue
+            setattr(meta, fld, value)
 
     topics = normalize(extraction)
     if doc.cell_coords:
@@ -507,4 +643,99 @@ def parse_document(doc: DocumentContent, use_llm: bool = True,
         faculty=faculty,
         engine=engine,
         warnings=warnings,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Multi-class (cohort) ingestion
+# ---------------------------------------------------------------------------
+
+
+def tag_cohort(result: ParseResponse, program: str, academic_year: int, source: str | None = None) -> CohortSummary:
+    """Stamp every topic/legend entry with its class and return the class summary."""
+    program = (result.meta.program or program or "MBBS").upper()
+    year = int(result.meta.academic_year or academic_year or 1)
+    result.meta.program, result.meta.academic_year = program, year
+    key = cohort_key(program, year)
+    for t in result.topics:
+        t.program, t.academic_year, t.cohort = program, year, key
+    for entry in result.legend:
+        entry.cohort = key
+    return CohortSummary(
+        cohort=key,
+        label=cohort_label(key),
+        program=program,
+        academic_year=year,
+        module_title=result.meta.module_title,
+        module_code=result.meta.module_code,
+        source=source,
+        topic_count=len(result.topics),
+    )
+
+
+def parse_sections(
+    sections: list[tuple[DocumentContent, str | None]],
+    use_llm: bool = True,
+    default_program: str = "MBBS",
+    default_year: int = 2,
+    overrides: ExtractedModuleMeta | None = None,
+) -> ParseResponse:
+    """Parse one or many class sections (from one or several files) into a single response.
+
+    ``sections`` pairs each DocumentContent with its source name. Each section's class comes from
+    its own header, then the file name ('MBBS_Year4.xlsx'), then the supplied defaults. Sections of
+    the same class (e.g. two files for 2nd Year MBBS) are merged.
+    """
+    results: list[tuple[ParseResponse, CohortSummary]] = []
+    for doc, source in sections:
+        name_prog, name_year = cohort_from_filename(source)
+        res = parse_document(doc, use_llm=use_llm, overrides=overrides)
+        summary = tag_cohort(
+            res,
+            name_prog if res.meta.program is None and name_prog else default_program,
+            name_year if res.meta.academic_year is None and name_year else default_year,
+            source,
+        )
+        results.append((res, summary))
+
+    if len(results) == 1:
+        res, summary = results[0]
+        res.cohorts = [summary]
+        return res
+
+    topics: list[ParsedTopic] = []
+    legend: list[LegendEntry] = []
+    warnings: list[str] = []
+    faculty: set[str] = set()
+    cohorts: dict[str, CohortSummary] = {}
+    by_key: dict[tuple[str | None, str, str, str], ParsedTopic] = {}
+    for res, summary in results:
+        for t in res.topics:
+            key = (t.cohort, t.topic_title.strip().lower(), t.discipline, t.session_type.value)
+            if key in by_key:
+                by_key[key].occurrences += t.occurrences
+                continue
+            by_key[key] = t
+            topics.append(t)
+        legend.extend(e for e in res.legend if (e.code, e.title, e.cohort) not in {(x.code, x.title, x.cohort) for x in legend})
+        warnings.extend(f"{summary.source or summary.label}: {w}" for w in res.warnings)
+        faculty.update(res.faculty)
+        if summary.cohort in cohorts:
+            cohorts[summary.cohort].topic_count += summary.topic_count
+            cohorts[summary.cohort].source = f"{cohorts[summary.cohort].source}, {summary.source}"
+        else:
+            cohorts[summary.cohort] = summary
+    for summary in cohorts.values():
+        summary.topic_count = sum(1 for t in topics if t.cohort == summary.cohort)
+
+    ordered = sorted(cohorts.values(), key=lambda c: (c.program, c.academic_year))
+    first = results[0][0]
+    return ParseResponse(
+        meta=first.meta,
+        topics=topics,
+        legend=legend,
+        faculty=sorted(faculty),
+        engine="gemini" if any(r.engine == "gemini" for r, _ in results) else "heuristic",
+        warnings=warnings,
+        cohorts=ordered,
     )
