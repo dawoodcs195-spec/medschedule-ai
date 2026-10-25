@@ -22,10 +22,58 @@ const geistMono = Geist_Mono({
   display: "swap",
 });
 
+const SITE_URL = "https://medschedule-ai.vercel.app";
+const SITE_TITLE = "MedSchedule AI | Integrated MBBS & BDS Timetable Engine";
+const SITE_DESCRIPTION =
+  "Turn MBBS & BDS module syllabi into conflict-free, integrated weekly timetables. AI curriculum ingestion, horizontal & vertical integration review, OR-Tools solving, drag-and-drop editing with an AI copilot, and 1-page Word export.";
+
 export const metadata: Metadata = {
-  title: "MedSchedule AI | Integrated MBBS & BDS Timetable Engine",
-  description:
-    "Turn MBBS & BDS module syllabi into conflict-free, integrated weekly timetables. AI curriculum ingestion, horizontal & vertical integration review, OR-Tools solving, drag-and-drop editing with an AI copilot, and 1-page Word export.",
+  metadataBase: new URL(SITE_URL),
+  title: {
+    default: SITE_TITLE,
+    template: "%s | MedSchedule AI",
+  },
+  description: SITE_DESCRIPTION,
+  applicationName: "MedSchedule AI",
+  authors: [{ name: "Muhammad Dawood", url: "https://github.com/dawoodcs195-spec" }],
+  creator: "Muhammad Dawood",
+  keywords: [
+    "medical timetable",
+    "MBBS timetable",
+    "BDS timetable",
+    "curriculum integration",
+    "constraint programming",
+    "OR-Tools",
+    "CP-SAT",
+    "Gemini",
+    "pgvector",
+    "Next.js",
+    "FastAPI",
+  ],
+  alternates: { canonical: "/" },
+  openGraph: {
+    type: "website",
+    url: SITE_URL,
+    siteName: "MedSchedule AI",
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
+    locale: "en_US",
+    images: [
+      {
+        url: "/og.png",
+        width: 1200,
+        height: 630,
+        alt: "MedSchedule AI: integrated timetables, solved in minutes",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
+    images: ["/og.png"],
+  },
+  robots: { index: true, follow: true },
 };
 
 export const viewport: Viewport = {
