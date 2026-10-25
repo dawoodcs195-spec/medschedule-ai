@@ -17,13 +17,17 @@ from typing import Any, Iterable
 
 from app.core.config import settings
 from app.core.constants import (
-    DEFAULT_DURATION_MINUTES, cohort_key, cohort_label, discipline_category, is_discipline_label,
+    DEFAULT_DURATION_MINUTES, NON_INTEGRATED_DISCIPLINES, cohort_key, cohort_label, discipline_category, is_discipline_label,
     normalize_discipline,
 )
 from app.core.gemini import gemini_enabled, get_gemini_client
 from app.models.schemas import (
-    CohortSummary, ExtractedModuleMeta, ExtractedTopic, LegendEntry, ParsedTopic, ParseResponse,
-    SessionType, SyllabusExtraction,
+    CohortSummary, ExtractedModuleMeta, ExtractedTopic, LegendEntry, ParsedSession, ParsedTopic,
+    ParseResponse, SessionBatch, SessionType, SyllabusExtraction,
+)
+from app.services.timetable_grid import (
+    GridWeek, _Cell, canonical_teachers, iter_text_lines, legend_discipline, minutes,
+    parse_legend_line, walk_grid,
 )
 
 logger = logging.getLogger(__name__)
@@ -45,6 +49,9 @@ class DocumentContent:
     program: str | None = None  # cohort hint from a section header, e.g. 'MBBS'
     academic_year: int | None = None
     source: str | None = None
+    # Faithful day x time reading of timetable tables (one entry per week), see timetable_grid.
+    grid_weeks: list[GridWeek] = field(default_factory=list)
+    grid_warnings: list[str] = field(default_factory=list)
 
     def to_text(self) -> str:
         parts = list(self.paragraphs)
@@ -133,9 +140,29 @@ class _SectionBuilder:
         if (cohort := _header_cohort(text)) is not None:
             if cohort != self.current:
                 self.current, self.current_week = cohort, None
+            self.after_table = False
         if (week := _header_week(text)) is not None:
             self.current_week = week
-        self.section().paragraphs.append(text)
+            self.after_table = False
+        sec = self.section()
+        sec.paragraphs.append(text)
+        # Lines right below a week's table are that week's practical / SGD legend.
+        if getattr(self, "after_table", False) and sec.grid_weeks:
+            sec.grid_weeks[-1].legend_lines.append(text)
+
+    def add_grid(self, rows: list[list[_Cell]], week_num: int) -> None:
+        sec = self.section()
+        order = sum(len(w.sessions) for w in sec.grid_weeks)
+        sessions = walk_grid(rows, week_num, sec.grid_warnings, order)
+        if sessions:
+            existing = next((w for w in sec.grid_weeks if w.week == week_num), None)
+            if existing is None:
+                sec.grid_weeks.append(GridWeek(week=week_num, sessions=sessions))
+            else:
+                existing.sessions.extend(sessions)
+                sec.grid_weeks.remove(existing)
+                sec.grid_weeks.append(existing)
+            self.after_table = True
 
     def next_week_number(self) -> int:
         count = self.tables_seen.get(self.current, 0) + 1
@@ -165,6 +192,8 @@ class _SectionBuilder:
             first = next(d for k, d in self.sections.items() if k is not None)
             first.paragraphs[:0] = orphan.paragraphs
             first.cells[:0] = orphan.cells
+            first.grid_weeks[:0] = orphan.grid_weeks
+            first.grid_warnings[:0] = orphan.grid_warnings
             docs = [d for d in docs if d is not orphan]
         return docs or [DocumentContent(source=self.source)]
 
@@ -186,9 +215,12 @@ def read_docx_sections(data: bytes, source: str | None = None) -> list[DocumentC
             # Merged cells share one <w:tc> element; holding the elements in `seen` keeps their
             # lxml proxies alive, so identity comparison is reliable across rows.
             seen: set[Any] = set()
+            grid_rows: list[list[_Cell]] = []
             for row in table.rows:
                 cells = row.cells
                 builder.add_row([(c.text or "").strip() for c in cells], week_num, [c._tc for c in cells], seen)
+                grid_rows.append([_Cell(key=c._tc, text=(c.text or "").strip()) for c in cells])
+            builder.add_grid(grid_rows, week_num)
     return builder.result()
 
 
@@ -239,6 +271,8 @@ def _merge_sections(sections: list[DocumentContent]) -> DocumentContent:
         merged.cells.extend(sec.cells)
         for k, v in sec.cell_coords.items():
             merged.cell_coords.setdefault(k, v)
+        merged.grid_weeks.extend(sec.grid_weeks)
+        merged.grid_warnings.extend(sec.grid_warnings)
     if len({(s.program, s.academic_year) for s in sections}) == 1 and sections:
         merged.program, merged.academic_year = sections[0].program, sections[0].academic_year
     return merged
@@ -483,6 +517,229 @@ def heuristic_extract(doc: DocumentContent) -> SyllabusExtraction:
 
 
 # ---------------------------------------------------------------------------
+# Timetable-grid extraction (real weekly timetables: exact slots, teachers, rotations)
+# ---------------------------------------------------------------------------
+
+MOVABLE_SESSION_TYPES = {"LGIS", "DSL"}
+_LEGEND_PREFIX = {"Histology": "HISTO", "Physiology": "PHYSIO", "Biochemistry": "BIOCHEM",
+                  "Anatomy": "ANAT", "Skill Lab": "SKILL LAB"}
+
+
+@dataclass
+class GridExtraction:
+    topics: list[ParsedTopic]
+    sessions: list[ParsedSession]
+    legend: list[LegendEntry]
+    faculty: list[str]
+    aliases: dict[str, str]
+    warnings: list[str]
+
+
+def _norm_title(title: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", title.lower()).strip()
+
+
+def grid_extract(doc: DocumentContent, organ: str | None) -> GridExtraction:
+    """Build topics + exact sessions from the grid reading of a timetable document."""
+    from collections import Counter, defaultdict
+    from uuid import uuid4
+
+    warnings = list(dict.fromkeys(doc.grid_warnings))
+    sessions_raw = [gs for w in sorted(doc.grid_weeks, key=lambda w: w.week) for gs in w.sessions]
+
+    # 1. Teachers: merge spelling variants across the whole document.
+    counts: Counter[str] = Counter()
+    for gs in sessions_raw:
+        counts.update(gs.info.teachers)
+        for b in gs.info.batches:
+            counts.update(b["faculty"])
+    canon = canonical_teachers(counts)
+    aliases = {k: v for k, v in canon.items() if k != v}
+    fix = lambda names: list(dict.fromkeys(canon.get(n, n) for n in names))  # noqa: E731
+    for gs in sessions_raw:
+        gs.info.teachers = fix(gs.info.teachers)
+        for b in gs.info.batches:
+            b["faculty"] = fix(b["faculty"])
+
+    # 2. Subjects for cells written without one ('DSL / Autonomic Nervous System / Dr. Rasheed').
+    known: dict[str, list[tuple[int, int, str]]] = defaultdict(list)
+    teacher_disc: dict[str, Counter[str]] = defaultdict(Counter)
+    for gs in sessions_raw:
+        if gs.info.raw_discipline:
+            disc = normalize_discipline(gs.info.raw_discipline)
+            known[_norm_title(gs.info.title)].append((gs.week, gs.day, disc))
+            for t in gs.info.teachers:
+                teacher_disc[t][disc] += 1
+    disciplines: dict[int, tuple[str, str]] = {}
+    for gs in sessions_raw:
+        if gs.info.kind == "EVENT" or gs.info.batches and gs.info.kind == "ROTATION":
+            continue
+        if gs.info.raw_discipline:
+            disciplines[gs.order] = (normalize_discipline(gs.info.raw_discipline), gs.info.raw_discipline)
+            continue
+        same = known.get(_norm_title(gs.info.title), [])
+        same.sort(key=lambda k: (abs(k[0] - gs.week) * 7 + abs(k[1] - gs.day)))
+        disc = same[0][2] if same else None
+        if disc is None:
+            votes: Counter[str] = Counter()
+            for t in gs.info.teachers:
+                votes.update(teacher_disc.get(t, Counter()))
+            disc = votes.most_common(1)[0][0] if votes else "General"
+        disciplines[gs.order] = (disc, "")
+        warnings.append(
+            f"Week {gs.week}: '{gs.info.raw_session} {gs.info.title}' has no subject written; filed under {disc}."
+        )
+
+    # 3. Legends per week ('HISTO P1= Neurons' under week 1's table)
+    legend: list[LegendEntry] = []
+    by_week: dict[int, dict[str, str]] = defaultdict(dict)
+    for w in doc.grid_weeks:
+        for line in iter_text_lines(w.legend_lines):
+            for code, title in parse_legend_line(line):
+                if code not in by_week[w.week]:
+                    by_week[w.week][code] = title
+                    legend.append(LegendEntry(code=code, title=title, week=w.week))
+
+    mismatch_seen: set[tuple[int, str]] = set()
+
+    def station_topic(week: int, disc: str, code: str | None, stype: str) -> str | None:
+        prefix = _LEGEND_PREFIX.get(disc)
+        if prefix is None:
+            return None
+        entries = by_week.get(week, {})
+        if disc == "Skill Lab":
+            for wk in sorted(by_week, key=lambda k: (k > week, abs(k - week))):
+                if "SKILL LAB" in by_week[wk]:
+                    return by_week[wk]["SKILL LAB"]
+            return None
+        if stype == "SGD":
+            return entries.get(f"{prefix} SGD")
+        if code and f"{prefix} {code}" in entries:
+            return entries[f"{prefix} {code}"]
+        alt = [(c, t) for c, t in entries.items() if c.startswith(prefix + " P")]
+        if len(alt) == 1:
+            if (week, prefix) not in mismatch_seen:
+                mismatch_seen.add((week, prefix))
+                warnings.append(
+                    f"Week {week}: timetable runs {prefix.title()}-{code or 'practical'} but the legend under "
+                    f"the table lists {alt[0][0]} ('{alt[0][1]}'); used the legend entry."
+                )
+            return alt[0][1]
+        # Not printed under this week's table: same practical number from another week's legend.
+        if code:
+            for wk in sorted(by_week, key=lambda k: abs(k - week)):
+                if f"{prefix} {code}" in by_week[wk]:
+                    if (week, prefix) not in mismatch_seen:
+                        mismatch_seen.add((week, prefix))
+                        warnings.append(
+                            f"Week {week}: {prefix} {code} is not in this week's legend; used the week {wk} "
+                            f"legend entry '{by_week[wk][f'{prefix} {code}']}'."
+                        )
+                    return by_week[wk][f"{prefix} {code}"]
+        return None
+
+    # 4. Sessions + topics
+    topics: list[ParsedTopic] = []
+    topic_index: dict[tuple[str, str, str], ParsedTopic] = {}
+    topic_teachers: dict[int, Counter[str]] = defaultdict(Counter)
+    sessions: list[ParsedSession] = []
+
+    def topic_for(title: str, disc: str, raw_disc: str, stype: str, teachers: list[str], week: int,
+                  coords: tuple[int, int, str, str], code: str | None = None, count: bool = True) -> ParsedTopic:
+        key = (_norm_title(title), disc, stype)
+        t = topic_index.get(key)
+        if t is None:
+            t = ParsedTopic(
+                id=uuid4(), topic_title=title, discipline=disc, raw_discipline=raw_disc or disc,
+                category=discipline_category(disc), session_type=SessionType(stype), organ_system=organ,
+                duration_minutes=DEFAULT_DURATION_MINUTES[stype], practical_code=code,
+                original_week=coords[0], original_day=coords[1], original_start=coords[2], original_end=coords[3],
+                weeks=[week],
+            )
+            t.occurrences = 0
+            topic_index[key] = t
+            topics.append(t)
+        if count:
+            t.occurrences += 1
+        if week not in t.weeks:
+            t.weeks.append(week)
+        topic_teachers[id(t)].update(teachers)
+        return t
+
+    for gs in sessions_raw:
+        info = gs.info
+        coords = (gs.week, gs.day, gs.start, gs.end)
+        stype = info.session_type
+        date = gs.date.isoformat() if gs.date else None
+        base = dict(week=gs.week, day_of_week=gs.day, date=date, time_start=gs.start, time_end=gs.end,
+                    raw_session=info.raw_session, faculty_names=info.teachers)
+        if info.kind == "EVENT":
+            sessions.append(ParsedSession(id=uuid4(), kind="EVENT", session_type=SessionType(stype),
+                                          discipline="Institutional", topic_title=info.title, **base))
+            continue
+        if info.kind == "ROTATION":
+            batches: list[SessionBatch] = []
+            for b in info.batches:
+                st = "SKILL_LAB" if b["discipline"] == "Skill Lab" else stype
+                title = station_topic(gs.week, b["discipline"], b["code"], "SGD" if st == "SGD" else "PRACTICAL")
+                if title and b["discipline"] != "SDL" and not title.lower().startswith("revision"):
+                    topic_for(title, b["discipline"], b["station"], st, b["faculty"], gs.week, coords,
+                              code=f"{_LEGEND_PREFIX.get(b['discipline'], b['discipline'].upper())} {b['code'] or ('SGD' if st == 'SGD' else '')}".strip(),
+                              count=False)
+                batches.append(SessionBatch(batches=b["batches"], station=b["station"], discipline=b["discipline"],
+                                            code=b["code"], topic_title=title, faculty_names=b["faculty"]))
+            label = "Practical rotation" if stype == "PRACTICAL" else "SGD rotation"
+            sessions.append(ParsedSession(id=uuid4(), kind="ROTATION", session_type=SessionType(stype),
+                                          discipline="Multi-Disciplinary", topic_title=f"{label} (Week-{gs.week:02d})",
+                                          batches=batches, **base))
+            continue
+        disc, raw_disc = disciplines.get(gs.order, ("General", ""))
+        title = info.title or disc
+        t = topic_for(title, disc, raw_disc, stype, info.teachers, gs.week, coords)
+        group_batches = [SessionBatch(batches=b["batches"], station=b["station"], discipline=b["discipline"],
+                                      code=b["code"], topic_title=title, faculty_names=b["faculty"]) for b in info.batches]
+        movable = (stype in MOVABLE_SESSION_TYPES and disc not in NON_INTEGRATED_DISCIPLINES
+                   and minutes(gs.end) - minutes(gs.start) == 60)
+        sessions.append(ParsedSession(
+            id=uuid4(), kind="TEACHING", session_type=SessionType(stype), discipline=disc, raw_discipline=raw_disc,
+            category=discipline_category(disc), topic_title=title, batches=group_batches, topic_id=t.id,
+            movable=movable, **base,
+        ))
+
+    # Legend keys no rotation cell referenced are still module content (one session per listed week).
+    for entry in legend:
+        disc = legend_discipline(entry.code)
+        if entry.title.lower().startswith("revision"):
+            continue
+        st = "SKILL_LAB" if disc == "Skill Lab" else ("SGD" if entry.code.endswith("SGD") else "PRACTICAL")
+        key = (_norm_title(entry.title), disc, st)
+        if key not in topic_index:
+            topic_for(entry.title, disc, entry.code, st, [], entry.week or 1,
+                      (entry.week or 1, 0, "", ""), code=entry.code, count=False)
+            t_new = topic_index[key]
+            t_new.original_day = t_new.original_start = t_new.original_end = None
+            t_new.occurrences = 1  # listed in a legend but never placed in a rotation cell
+
+    # Rotation topics count once per week they run (each batch does the station once that week).
+    for t in topics:
+        t.weeks.sort()
+        if t.occurrences == 0:
+            t.occurrences = max(1, len(t.weeks))
+        names = [n for n, _ in topic_teachers[id(t)].most_common()]
+        t.faculty_names = names
+        t.faculty_name = names[0] if names else None
+
+    if aliases:
+        warnings.append(
+            "Merged teacher spellings: " + "; ".join(f"{k} → {v}" for k, v in sorted(aliases.items())) + "."
+        )
+    faculty = sorted({n for s_ in sessions for n in s_.faculty_names}
+                     | {n for s_ in sessions for b in s_.batches for n in b.faculty_names})
+    return GridExtraction(topics=topics, sessions=sessions, legend=legend, faculty=faculty,
+                          aliases=aliases, warnings=warnings)
+
+
+# ---------------------------------------------------------------------------
 # Gemini structured-output parser
 # ---------------------------------------------------------------------------
 SYSTEM_PROMPT = """You are an expert medical/dental curriculum analyst for an MBBS/BDS integrated modular curriculum.
@@ -571,6 +828,9 @@ def parse_document(doc: DocumentContent, use_llm: bool = True,
     warnings: list[str] = []
     engine = "heuristic"
 
+    if any(w.sessions for w in doc.grid_weeks):
+        return _parse_grid_document(doc, overrides)
+
     # Run fast deterministic heuristic extraction first (< 20ms for .docx/.xlsx/pipe-delimited lists)
     heuristic_res = heuristic_extract(doc)
     extraction: SyllabusExtraction | None = heuristic_res if heuristic_res.topics else None
@@ -646,6 +906,26 @@ def parse_document(doc: DocumentContent, use_llm: bool = True,
     )
 
 
+def _parse_grid_document(doc: DocumentContent, overrides: ExtractedModuleMeta | None) -> ParseResponse:
+    meta = parse_header(doc.paragraphs)
+    if doc.program:
+        meta.program = doc.program
+    if doc.academic_year:
+        meta.academic_year = doc.academic_year
+    if overrides:
+        for fld, value in overrides.model_dump().items():
+            if value is not None and not (fld in ("program", "academic_year") and getattr(meta, fld) is not None):
+                setattr(meta, fld, value)
+    organ = meta.module_title.split(" BLOCK")[0].title() if meta.module_title else None
+    g = grid_extract(doc, organ)
+    if not g.topics:
+        g.warnings.append("No topics could be extracted from the input.")
+    return ParseResponse(
+        meta=meta, topics=g.topics, legend=g.legend, faculty=g.faculty, engine="timetable-grid",
+        warnings=g.warnings, sessions=g.sessions, teacher_aliases=g.aliases,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Multi-class (cohort) ingestion
 # ---------------------------------------------------------------------------
@@ -661,6 +941,8 @@ def tag_cohort(result: ParseResponse, program: str, academic_year: int, source: 
         t.program, t.academic_year, t.cohort = program, year, key
     for entry in result.legend:
         entry.cohort = key
+    for sess in result.sessions:
+        sess.cohort = key
     return CohortSummary(
         cohort=key,
         label=cohort_label(key),
@@ -707,6 +989,9 @@ def parse_sections(
     legend: list[LegendEntry] = []
     warnings: list[str] = []
     faculty: set[str] = set()
+    sessions: list[ParsedSession] = []
+    aliases: dict[str, str] = {}
+    remap: dict = {}
     cohorts: dict[str, CohortSummary] = {}
     by_key: dict[tuple[str | None, str, str, str], ParsedTopic] = {}
     for res, summary in results:
@@ -714,12 +999,16 @@ def parse_sections(
             key = (t.cohort, t.topic_title.strip().lower(), t.discipline, t.session_type.value)
             if key in by_key:
                 by_key[key].occurrences += t.occurrences
+                if t.id is not None:
+                    remap[t.id] = by_key[key].id
                 continue
             by_key[key] = t
             topics.append(t)
         legend.extend(e for e in res.legend if (e.code, e.title, e.cohort) not in {(x.code, x.title, x.cohort) for x in legend})
         warnings.extend(f"{summary.source or summary.label}: {w}" for w in res.warnings)
         faculty.update(res.faculty)
+        sessions.extend(res.sessions)
+        aliases.update(res.teacher_aliases)
         if summary.cohort in cohorts:
             cohorts[summary.cohort].topic_count += summary.topic_count
             cohorts[summary.cohort].source = f"{cohorts[summary.cohort].source}, {summary.source}"
@@ -728,6 +1017,9 @@ def parse_sections(
     for summary in cohorts.values():
         summary.topic_count = sum(1 for t in topics if t.cohort == summary.cohort)
 
+    for sess in sessions:
+        if sess.topic_id in remap:
+            sess.topic_id = remap[sess.topic_id]
     ordered = sorted(cohorts.values(), key=lambda c: (c.program, c.academic_year))
     first = results[0][0]
     return ParseResponse(
@@ -735,7 +1027,9 @@ def parse_sections(
         topics=topics,
         legend=legend,
         faculty=sorted(faculty),
-        engine="gemini" if any(r.engine == "gemini" for r, _ in results) else "heuristic",
+        engine="gemini" if any(r.engine == "gemini" for r, _ in results) else results[0][0].engine,
         warnings=warnings,
         cohorts=ordered,
+        sessions=sessions,
+        teacher_aliases=aliases,
     )

@@ -28,7 +28,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.constants import (
-    BASIC_SCIENCES, CLINICAL_DISCIPLINES, cohort_key, cohort_label, sequence_rank,
+    BASIC_SCIENCES, CLINICAL_DISCIPLINES, NON_INTEGRATED_DISCIPLINES, NON_INTEGRATED_SESSION_TYPES,
+    cohort_key, cohort_label, sequence_rank,
 )
 from app.core.gemini import gemini_enabled, get_gemini_client
 from app.models import db_models as m
@@ -41,8 +42,8 @@ logger = logging.getLogger(__name__)
 # organ/disease-level matches score >= 0.45, shared-system-only or generic-word matches < 0.42.
 SIMILARITY_THRESHOLD_HORIZONTAL = 0.45
 SIMILARITY_THRESHOLD_VERTICAL = 0.45
-MAX_PARTNERS_PER_TOPIC = {"HORIZONTAL": 6, "VERTICAL": 4}
-MAX_PARTNERS_PER_DISCIPLINE = 2  # e.g. at most 2 Histology partners for one Physiology topic
+MAX_PARTNERS_PER_TOPIC = {"HORIZONTAL": 8, "VERTICAL": 4}
+MAX_PARTNERS_PER_DISCIPLINE = 4  # e.g. at most 4 Histology partners for one Physiology topic
 MAX_LINKS_PER_TYPE = 300
 GEMINI_BLEND_WEIGHT = 0.35
 LOCAL_ENGINE = "medical-ontology+tfidf"
@@ -164,9 +165,16 @@ class _Classified:
     target: int
 
 
+def is_integrable(t: ParsedTopic) -> bool:
+    """Research (RIPPLE), Islamiat/Pak Studies, SDL, mentor meetings and PAL are never linked."""
+    return t.discipline not in NON_INTEGRATED_DISCIPLINES and t.session_type.value not in NON_INTEGRATED_SESSION_TYPES
+
+
 def classify_pair(i: int, j: int, topics: list[ParsedTopic]) -> Optional[_Classified]:
     """Decide whether two topics form a horizontal or vertical integration, and its direction."""
     a, b = topics[i], topics[j]
+    if not (is_integrable(a) and is_integrable(b)):
+        return None
     year_a, year_b = a.academic_year, b.academic_year
     if year_a is not None and year_b is not None and year_a != year_b:
         src, tgt = (i, j) if year_a < year_b else (j, i)
@@ -361,8 +369,8 @@ def cluster_and_integrate(
                 continue
             src, tgt = topics[kind.source], topics[kind.target]
             dedup_key = (
-                f"{topic_cohort(src)}:{src.discipline}:{src.topic_title.strip().lower()}",
-                f"{topic_cohort(tgt)}:{tgt.discipline}:{tgt.topic_title.strip().lower()}",
+                f"{topic_cohort(src)}:{src.discipline}:{src.session_type.value}:{src.topic_title.strip().lower()}",
+                f"{topic_cohort(tgt)}:{tgt.discipline}:{tgt.session_type.value}:{tgt.topic_title.strip().lower()}",
             )
             if dedup_key in seen_pairs:
                 continue
