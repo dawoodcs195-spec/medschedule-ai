@@ -5,11 +5,11 @@ Enforces Option B Conflict Handling (Soft Warnings):
 - Detects Room collisions, Faculty double-bookings, Friday afternoon violations,
   Daily break violations, and Student batch overlaps.
 - Returns detailed diagnostic notes and suggests candidate conflict-free open slots.
-- Powers natural language schedule edits via Gemini structured instructions + deterministic NL parser fallback.
+- Powers natural language schedule edits (move, swap, remove, teacher assignment, lists of changes)
+  with a deterministic command parser.
 """
 from __future__ import annotations
 
-import json
 import logging
 import re
 from typing import Optional
@@ -17,9 +17,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.core.config import settings
-from app.core.constants import BATCHES, DAYS, FRIDAY
-from app.core.gemini import gemini_enabled, get_gemini_client
+from app.core.constants import DAYS, FRIDAY
 from app.services.solver import ScheduledCell, TimetableSchedule, recompute_schedule_analytics
 
 logger = logging.getLogger(__name__)
@@ -366,7 +364,7 @@ def add_schedule_cell(
     new_cell = ScheduledCell(
         id=uuid4(),
         day_of_week=day_of_week,
-        day_name=DAYS.get(day_of_week, f"MONDAY"),
+        day_name=DAYS.get(day_of_week, "MONDAY"),
         time_start=time_start,
         time_end=time_end,
         session_type=session_type,
@@ -457,6 +455,8 @@ _DAY_LOOKUP = {
     "saturday": 6, "sat": 6,
 }
 
+_DAY_PATTERN = r"\b(?:monday|mon|tuesday|tues|tue|wednesday|wed|thursday|thurs|thur|thu|friday|fri|saturday|sat)\b"
+
 _TIME_LOOKUP = {
     "8": ("08:00", "09:00"),
     "08": ("08:00", "09:00"),
@@ -481,46 +481,256 @@ _TIME_LOOKUP = {
 }
 
 
+_WORD_RE = re.compile(r"[a-z0-9]+")
+_FILLER = {
+    "the", "a", "an", "this", "that", "class", "classes", "session", "sessions", "lecture", "lectures",
+    "lgis", "of", "on", "at", "in", "to", "for", "with", "by", "and", "move", "shift", "put", "place",
+    "reschedule", "swap", "switch", "exchange", "teacher", "teachers", "faculty", "assign", "reassign",
+    "give", "please", "dr", "prof", "am", "pm", "s", "all", "his", "her", "their", "class's",
+}
+
+
+def _words(text: str) -> list[str]:
+    out = []
+    for w in _WORD_RE.findall(text.lower()):
+        if len(w) > 3 and w.endswith("s") and not w.endswith("ss"):
+            w = w[:-1]
+        out.append(w)
+    return out
+
+
+def _movable(schedule: TimetableSchedule) -> list[ScheduledCell]:
+    return [c for c in schedule.cells if c.session_type not in ("BREAK", "HALF_DAY")]
+
+
+def _cell_at(schedule: TimetableSchedule, text: str) -> Optional[ScheduledCell]:
+    """A cell referenced by day + time, e.g. 'Monday 8 am class'."""
+    lower = text.lower()
+    days = [_DAY_LOOKUP[m.group(0)] for m in re.finditer(_DAY_PATTERN, lower)]
+    times = [
+        _TIME_LOOKUP[m.group(1)][0]
+        for m in re.finditer(r"\b(12:30|0?[89]:00|1[01]:00|0?[89]|1[01])\b", lower)
+        if m.group(1) in _TIME_LOOKUP
+    ]
+    if days and times:
+        return next((c for c in _movable(schedule) if c.day_of_week == days[0] and c.time_start == times[0]), None)
+    return None
+
+
+def _match_cells_by_topic(text: str, schedule: TimetableSchedule) -> list[tuple[float, ScheduledCell]]:
+    """Cells ranked by how much of the instruction names their topic (whole words only)."""
+    wanted = {w for w in _words(text) if w not in _FILLER and len(w) > 2}
+    if not wanted:
+        return []
+    scored = []
+    for c in _movable(schedule):
+        title = {w for w in _words(c.topic_title) if w not in _FILLER}
+        if not title:
+            continue
+        hits = len(wanted & title)
+        if hits:
+            scored.append((hits / len(title) + hits, c))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return scored
+
+
 def _find_target_cell(
     instruction: str,
     schedule: TimetableSchedule,
     selected_cell_id: Optional[UUID],
+    use_faculty: bool = True,
 ) -> Optional[ScheduledCell]:
+    movable = _movable(schedule)
     lower = instruction.lower()
-    movable = [c for c in schedule.cells if c.session_type not in ("BREAK", "HALF_DAY")]
 
-    # 1. Match by explicit doctor / faculty name mentioned in instruction
-    for c in movable:
-        if c.faculty_name:
-            fac_clean = c.faculty_name.lower().replace("dr.", "").replace("prof.", "").strip()
-            parts = [p for p in fac_clean.split() if len(p) > 2]
-            if any(p in lower for p in parts):
+    # 1. Explicit day + time ("Monday 8 am")
+    if (cell := _cell_at(schedule, instruction)) is not None:
+        return cell
+
+    # 2. Topic words ("cardiac cycle")
+    ranked = _match_cells_by_topic(instruction, schedule)
+    if ranked:
+        return ranked[0][1]
+
+    # 3. A teacher named in the instruction ("Dr. Ambar's session")
+    if use_faculty:
+        for c in movable:
+            if c.faculty_name and _mentions_teacher(lower, c.faculty_name):
                 return c
 
-    # 2. Match by topic title keywords
-    best_cell: Optional[ScheduledCell] = None
-    best_hits = 0
+    # 4. Discipline name ("the physiology class")
     for c in movable:
-        words = [w.strip("(),.:").lower() for w in c.topic_title.split() if len(w) > 3]
-        hits = sum(1 for w in words if w in lower)
-        if hits > best_hits:
-            best_hits = hits
-            best_cell = c
-    if best_cell and best_hits > 0:
-        return best_cell
-
-    # 3. Match by discipline name
-    for c in movable:
-        if c.discipline.lower() in lower:
+        if re.search(rf"\b{re.escape(c.discipline.lower())}\b", lower):
             return c
 
-    # 4. Fallback to currently selected cell in UI
+    # 5. The cell selected in the UI ("this class")
     if selected_cell_id:
         found = next((c for c in movable if c.id == selected_cell_id), None)
         if found:
             return found
 
-    return movable[0] if movable else None
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Teacher (faculty) assignment: "give X to Dr. Y", "X with Dr. Y", "Dr. Y will teach X",
+# "replace Dr. A with Dr. B", "swap teachers of X and Y"
+# ---------------------------------------------------------------------------
+
+_TITLE = r"(?:dr|prof|mr|mrs|ms|miss|sir)"
+_NAME_STOP = (
+    r"(?!(?:to|for|with|by|and|in|on|at|the|will|should|can|must|teach|teaches|take|takes|cover|covers|"
+    r"handle|instead|from|class|classes|session|lecture|please|now|as)\b)"
+)
+TEACHER_RE = re.compile(
+    rf"\b{_TITLE}\.?\s*{_NAME_STOP}[a-z][a-z'\-]*\.?(?:\s+{_NAME_STOP}[a-z][a-z'\-]*\.?){{0,2}}",
+    re.I,
+)
+_NEW_TEACHER_BEFORE = re.compile(r"\b(?:to|with|by|under|for|onto|=)\s*$", re.I)
+_NEW_TEACHER_AFTER = re.compile(r"^\s*(?:will|should|can|must|shall|to)?\s*(?:teach|take|cover|handle|conduct)", re.I)
+_ASSIGN_HINT = re.compile(
+    r"\b(?:assign|reassign|give|allocate|hand|transfer|teacher|faculty|teach|take|cover|replace|instead)\b", re.I
+)
+_PLURAL_HINT = re.compile(r"\b(?:all|classes|sessions|lectures|load|replace|everything)\b", re.I)
+
+
+def _canon_teacher(raw: str) -> str:
+    name = " ".join(raw.replace(".", ". ").split()).strip()
+    title, _, rest = name.partition(" ")
+    title = title.rstrip(".").title() + "."
+    rest = " ".join(p if (len(p) <= 2 and p.endswith(".")) else p.capitalize() for p in rest.split())
+    return f"{title} {rest}".strip()
+
+
+def _teacher_tokens(name: str) -> list[str]:
+    return [p for p in _WORD_RE.findall(name.lower()) if p not in {"dr", "prof", "mr", "mrs", "ms", "miss", "sir"} and len(p) > 1]
+
+
+def _same_teacher(mention: str, faculty_name: str) -> bool:
+    """'Dr. Asma Khan' matches 'Dr. Asma Khan' and 'dr asma' does too, but not 'Dr. Haris Khan'."""
+    wanted = set(_teacher_tokens(mention))
+    return bool(wanted) and wanted <= set(_teacher_tokens(faculty_name))
+
+
+def _mentions_teacher(text: str, faculty_name: str) -> bool:
+    mentions = [m.group(0) for m in TEACHER_RE.finditer(text)]
+    if mentions:
+        return any(_same_teacher(m, faculty_name) for m in mentions)
+    # No "Dr." in the text ("move Ambar's session"): a distinctive name word is enough.
+    toks = [t for t in _teacher_tokens(faculty_name) if len(t) > 3]
+    return any(re.search(rf"\b{re.escape(t)}\b", text.lower()) for t in toks)
+
+
+def _resolve_teacher(raw: str, schedule: TimetableSchedule) -> str:
+    """Prefer an existing faculty name ('dr arshad' -> 'Dr. M. Arshad') when unambiguous."""
+    existing = sorted({c.faculty_name for c in schedule.cells if c.faculty_name})
+    matches = [f for f in existing if _same_teacher(raw, f)]
+    return matches[0] if len(matches) == 1 else _canon_teacher(raw)
+
+
+def _apply_teachers(
+    schedule: TimetableSchedule, changes: list[tuple[ScheduledCell, str]], action: str
+) -> CopilotChatResponse:
+    notes, conflicts_all = [], []
+    for cell, teacher in changes:
+        old = cell.faculty_name or "Unassigned"
+        cell.faculty_name = teacher
+        notes.append(f"'{cell.topic_title}' ({cell.day_name.title()} {cell.time_start}): {old} → {teacher}")
+    for cell, _ in changes:
+        conflicts = check_cell_conflicts(cell, schedule.cells, schedule=schedule)
+        teacher_conflicts = [c for c in conflicts if c.message.startswith("Faculty Clash")]
+        cell.is_conflicted = bool(teacher_conflicts)
+        cell.conflict_notes = "; ".join(c.message for c in teacher_conflicts) or None
+        conflicts_all.extend(teacher_conflicts)
+    recompute_schedule_analytics(schedule)
+    reply = ("Reassigned " if len(changes) == 1 else f"Reassigned {len(changes)} classes: ") + "; ".join(notes) + "."
+    if conflicts_all:
+        reply += f" Warning: {conflicts_all[0].message}"
+    return CopilotChatResponse(
+        reply=reply,
+        action_taken=action,
+        updated_schedule=schedule,
+        affected_cell_id=changes[0][0].id,
+        conflicts=conflicts_all,
+    )
+
+
+def _try_teacher_command(
+    text: str, schedule: TimetableSchedule, selected_cell_id: Optional[UUID]
+) -> Optional[CopilotChatResponse]:
+    mentions = list(TEACHER_RE.finditer(text))
+    if not mentions:
+        return None
+    is_teacher_swap = bool(re.search(r"\b(?:swap|switch|exchange)\b", text, re.I)) and len(mentions) >= 2
+    if not (is_teacher_swap or _ASSIGN_HINT.search(text) or re.search(rf"\b(?:with|by|under|to)\s+{_TITLE}\b", text, re.I)):
+        return None
+    lower = text.lower()
+
+    if re.search(r"\b(?:swap|switch|exchange)\b", lower):
+        if len(mentions) < 2:
+            return None  # "swap the teachers of X and Y" is handled by the class-swap branch
+        # "Swap Dr. A and Dr. B": exchange their whole teaching load in this timetable
+        a, b = (_resolve_teacher(m.group(0), schedule) for m in mentions[:2])
+        cells_a = [c for c in _movable(schedule) if c.faculty_name and _same_teacher(mentions[0].group(0), c.faculty_name)]
+        cells_b = [c for c in _movable(schedule) if c.faculty_name and _same_teacher(mentions[1].group(0), c.faculty_name)]
+        if not cells_a and not cells_b:
+            return None
+        return _apply_teachers(schedule, [(c, b) for c in cells_a] + [(c, a) for c in cells_b], "SWAPPED_FACULTY")
+
+    new_m = next(
+        (m for m in mentions if _NEW_TEACHER_BEFORE.search(text[: m.start()]) or _NEW_TEACHER_AFTER.match(text[m.end():])),
+        None,
+    )
+    if new_m is None:
+        if re.match(r"^\s*replace\b", lower) and len(mentions) >= 2:
+            new_m = mentions[1]
+        else:
+            return None
+    new_teacher = _resolve_teacher(new_m.group(0), schedule)
+    old_mentions = [m for m in mentions if m is not new_m]
+
+    # Text describing *which* class, with teacher names removed
+    target_text = TEACHER_RE.sub(" ", text)
+    movable = _movable(schedule)
+
+    targets: list[ScheduledCell] = []
+    if old_mentions:
+        old_cells = [
+            c for c in movable
+            if c.faculty_name and any(_same_teacher(m.group(0), c.faculty_name) for m in old_mentions)
+        ]
+        topic_ranked = [c for _, c in _match_cells_by_topic(target_text, schedule) if c in old_cells]
+        if topic_ranked:
+            targets = topic_ranked[:1]
+        elif _PLURAL_HINT.search(text) or len(old_cells) == 1:
+            targets = old_cells
+        elif old_cells:
+            targets = old_cells
+    if not targets:
+        cell = _cell_at(schedule, target_text)
+        if cell is None:
+            ranked = _match_cells_by_topic(target_text, schedule)
+            cell = ranked[0][1] if ranked else None
+        if cell is None and selected_cell_id:
+            cell = next((c for c in movable if c.id == selected_cell_id), None)
+        if cell is not None:
+            # A topic taught in several sessions moves to the new teacher as a whole.
+            targets = [c for c in movable if c.topic_title == cell.topic_title and c.discipline == cell.discipline]
+    if not targets:
+        return CopilotChatResponse(
+            reply=f"I couldn't tell which class should go to {new_teacher}. Select the class or name its topic, "
+            f"e.g. 'Give Cardiac cycle to {new_teacher}'.",
+            action_taken="INFO",
+            updated_schedule=schedule,
+        )
+    return _apply_teachers(schedule, [(c, new_teacher) for c in targets], "REASSIGNED_FACULTY")
+
+
+def _swap_teachers(c1: ScheduledCell, c2: ScheduledCell, schedule: TimetableSchedule) -> CopilotChatResponse:
+    t1, t2 = c1.faculty_name, c2.faculty_name
+    return _apply_teachers(
+        schedule, [(c1, t2 or "Unassigned"), (c2, t1 or "Unassigned")], "SWAPPED_FACULTY"
+    )
 
 
 def _extract_destination_day_and_time(instruction: str, default_day: int) -> tuple[int, str, str]:
@@ -546,36 +756,53 @@ def _extract_destination_day_and_time(instruction: str, default_day: int) -> tup
     return new_day, "09:00", "10:00"
 
 
-def execute_copilot_command(req: CopilotChatRequest) -> CopilotChatResponse:
-    """Process natural language rescheduling, faculty reassignment, or conflict queries."""
-    text = req.instruction.strip()
-    lower = text.lower()
-    schedule = req.schedule.model_copy(deep=True)
+_COMMAND_SPLIT = re.compile(r"(?:\n+|;|\s+then\s+|(?:^|\s)\d+[.)]\s+)", re.I)
 
-    # Case 1: Faculty reassignment ("Reassign Dr. Jillani's session to Dr. Tariq" / "Change faculty to Dr. Tariq")
-    reassign_match = re.search(r"(?:reassign|assign|change\s+faculty|replace).*?\bto\s+((?:dr|prof)\.?\s+[a-zA-Z .]+)", text, re.I)
-    if reassign_match:
-        new_faculty = reassign_match.group(1).strip()
-        if not new_faculty.lower().startswith(("dr.", "prof.")):
-            new_faculty = re.sub(r"^(dr|prof)\s*", lambda m: f"{m.group(1).title()}. ", new_faculty, flags=re.I)
-        target = _find_target_cell(text.split(" to ")[0], schedule, req.selected_cell_id)
-        if target:
-            old_fac = target.faculty_name or "Unassigned"
-            target.faculty_name = new_faculty
-            conflicts = check_cell_conflicts(target, schedule.cells, schedule=schedule)
-            target.is_conflicted = len(conflicts) > 0
-            target.conflict_notes = "; ".join(c.message for c in conflicts) if conflicts else None
-            recompute_schedule_analytics(schedule)
-            return CopilotChatResponse(
-                reply=f"Reassigned '{target.topic_title}' ({target.day_name.title()} {target.time_start}–{target.time_end}) from {old_fac} to {new_faculty}.",
-                action_taken="REASSIGNED_FACULTY",
-                updated_schedule=schedule,
-                affected_cell_id=target.id,
-                conflicts=conflicts,
-            )
+
+def split_commands(instruction: str) -> list[str]:
+    """'1. Give X to Dr. A 2. Swap Monday 8 with Tuesday 9' -> two commands."""
+    parts = [p.strip(" ,.") for p in _COMMAND_SPLIT.split(instruction)]
+    return [p for p in parts if p and len(p) > 2]
+
+
+def execute_copilot_command(req: CopilotChatRequest) -> CopilotChatResponse:
+    """Run one instruction, or a list of changes (one per line, numbered, or ';'-separated)."""
+    commands = split_commands(req.instruction) or [req.instruction.strip()]
+    schedule = req.schedule.model_copy(deep=True)
+    if len(commands) == 1:
+        return _execute_single(commands[0], schedule, req.selected_cell_id)
+
+    replies, conflicts = [], []
+    last: Optional[CopilotChatResponse] = None
+    for n, cmd in enumerate(commands, 1):
+        res = _execute_single(cmd, schedule, req.selected_cell_id)
+        schedule = res.updated_schedule
+        replies.append(f"{n}. {res.reply}")
+        conflicts.extend(res.conflicts)
+        last = res
+    applied = sum(1 for r in replies if "couldn't" not in r and "Try commands like" not in r)
+    return CopilotChatResponse(
+        reply=f"Applied {applied} of {len(commands)} changes:\n" + "\n".join(replies),
+        action_taken="BATCH",
+        updated_schedule=schedule,
+        affected_cell_id=last.affected_cell_id if last else None,
+        conflicts=conflicts,
+    )
+
+
+def _execute_single(text: str, schedule: TimetableSchedule, selected_cell_id: Optional[UUID]) -> CopilotChatResponse:
+    """Process one rescheduling, teacher-assignment, swap, remove or status instruction."""
+    text = text.strip()
+    lower = text.lower()
+
+    # Case 1: Teacher assignment ("Give Cardiac cycle to Dr. Tariq", "Renal filtration with Dr. Asma",
+    # "Dr. Hina will teach Brachial plexus", "Replace Dr. Jillani with Dr. Tariq")
+    teacher_res = _try_teacher_command(text, schedule, selected_cell_id)
+    if teacher_res is not None:
+        return teacher_res
 
     # Case 2: Remove / Delete / Cancel a session ("Remove Spine trauma", "Delete Monday 8 AM", "Remove selected class")
-    if any(k in lower for k in ("remove", "delete", "cancel", "drop", "clear")):
+    if re.search(r"\b(?:remove|delete|cancel|drop|clear)\b", lower):
         movable = [c for c in schedule.cells if c.session_type not in ("BREAK", "HALF_DAY")]
         target: Optional[ScheduledCell] = None
 
@@ -586,13 +813,13 @@ def execute_copilot_command(req: CopilotChatRequest) -> CopilotChatResponse:
             target = next((c for c in movable if c.day_of_week == day_matches[0] and c.time_start == time_matches[0]), None)
 
         if not target:
-            target = _find_target_cell(text, schedule, req.selected_cell_id)
+            target = _find_target_cell(text, schedule, selected_cell_id)
 
         if target:
             return remove_schedule_cell(schedule, target.id)
 
     # Case 3: Swap two sessions ("Swap Monday 8 AM with Wednesday 9 AM" or "Swap Spine trauma with Synapse")
-    if any(k in lower for k in ("swap", "switch", "exchange")):
+    if re.search(r"\b(?:swap|switch|exchange)\b", lower):
         movable = [c for c in schedule.cells if c.session_type not in ("BREAK", "HALF_DAY")]
         day_matches = [_DAY_LOOKUP[m.group(0)] for m in re.finditer(r"\b(?:monday|mon|tuesday|tue|wednesday|wed|thursday|thu|friday|fri|saturday|sat)\b", lower)]
         time_matches = [_TIME_LOOKUP[m.group(1)][0] for m in re.finditer(r"\b(0?[89]:00|1[01]:00|12:30|0?[89]|1[01])\b", lower) if m.group(1) in _TIME_LOOKUP]
@@ -609,7 +836,7 @@ def execute_copilot_command(req: CopilotChatRequest) -> CopilotChatResponse:
             parts = re.split(r"\b(?:with|and)\b", text, maxsplit=1, flags=re.I)
             if len(parts) == 2:
                 left_text, right_text = parts[0], parts[1]
-                c1 = _find_target_cell(left_text, schedule, req.selected_cell_id)
+                c1 = _find_target_cell(left_text, schedule, selected_cell_id)
                 # Ensure c2 searches excluding c1
                 remaining_sched = schedule.model_copy(deep=True)
                 if c1:
@@ -623,11 +850,26 @@ def execute_copilot_command(req: CopilotChatRequest) -> CopilotChatResponse:
                     c2 = _find_target_cell(right_text, remaining_sched, None)
 
         if c1 and c2 and c1.id != c2.id:
+            if re.search(r"\b(?:teacher|faculty|teachers)\b", lower):
+                return _swap_teachers(c1, c2, schedule)
             return swap_schedule_cells(schedule, c1.id, c2.id)
+        return CopilotChatResponse(
+            reply="I couldn't find both classes to swap in this week's timetable. Name each by topic or by "
+            "day and time, e.g. 'Swap Monday 8 AM with Wednesday 9 AM', or switch week first.",
+            action_taken="INFO",
+            updated_schedule=schedule,
+        )
 
     # Case 3: Move / reschedule command ("Move Dr. Ambar's session to Wednesday 10 AM", "Move Spine trauma to Friday afternoon")
-    if any(k in lower for k in ("move", "reschedule", "shift", "put", "place", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday")):
-        target = _find_target_cell(text, schedule, req.selected_cell_id)
+    if re.search(r"\b(?:move|reschedule|shift|put|place|postpone|prepone)\b", lower) or re.search(_DAY_PATTERN, lower):
+        # The destination ("to Wednesday 10 am") must not be mistaken for the class being moved.
+        dest = re.search(
+            r"\b(?:to|into|onto|on|at)\b(?=.*(?:" + _DAY_PATTERN + r"|\d|afternoon|morning))", text, re.I
+        )
+        source_text = text[: dest.start()] if dest else text
+        target = _find_target_cell(source_text, schedule, selected_cell_id) if source_text.strip() else None
+        if target is None and selected_cell_id:
+            target = next((c for c in _movable(schedule) if c.id == selected_cell_id), None)
         if target:
             new_day, new_start, new_end = _extract_destination_day_and_time(text, target.day_of_week)
             val = validate_slot_move(
@@ -675,8 +917,8 @@ def execute_copilot_command(req: CopilotChatRequest) -> CopilotChatResponse:
     return CopilotChatResponse(
         reply=(
             f"{status_summary} Open alternative slots include: {', '.join(open_slots[:3])}. "
-            f"Try commands like: 'Move Spine trauma to Wednesday 10 AM', 'Reassign Dr. Jillani to Dr. Tariq', "
-            f"or 'Swap Monday 8 AM with Friday 9 AM'."
+            f"Try commands like: 'Move Cardiac cycle to Wednesday 10 AM', 'Give Cardiac cycle to Dr. Tariq', "
+            f"'Replace Dr. Jillani with Dr. Tariq', 'Swap Monday 8 AM with Friday 9 AM', or several changes, one per line."
         ),
         action_taken="INFO",
         updated_schedule=schedule,
