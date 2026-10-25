@@ -2,7 +2,7 @@
 
 import { useCallback, useSyncExternalStore } from "react";
 
-export const THEME_STORAGE_KEY = "medschedule-theme";
+import { THEME_STORAGE_KEY } from "./theme-script";
 const listeners = new Set<() => void>();
 
 function readIsDark(): boolean {
@@ -39,6 +39,3 @@ export function useTheme() {
 
   return { isDark, toggleTheme };
 }
-
-/** Runs before hydration to avoid a flash of the wrong theme. */
-export const themeInitScript = `(function(){try{var t=localStorage.getItem('${THEME_STORAGE_KEY}');document.documentElement.classList.toggle('dark',t==='dark');}catch(e){}})();`;

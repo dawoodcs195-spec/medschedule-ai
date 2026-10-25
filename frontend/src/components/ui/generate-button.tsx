@@ -39,7 +39,7 @@ export function GenerateButton({
         .gen-btn {
           --border-radius: 9999px;
           --transition: 0.25s ease;
-          --button-gradient: linear-gradient(90deg, #4f46e5 0%, #2563eb 50%, #059669 100%);
+          --button-gradient: linear-gradient(100deg, #0e7490 0%, #0891b2 55%, #15803d 100%);
           --highlight-color-hue: ${hue}deg;
 
           position: relative;
@@ -63,7 +63,7 @@ export function GenerateButton({
 
           box-shadow:
             inset 0px 1px 0px rgba(255, 255, 255, 0.35),
-            0px 4px 12px -2px rgba(37, 99, 235, 0.35),
+            0px 4px 12px -2px rgba(8, 145, 178, 0.35),
             0px 2px 6px -1px rgba(5, 150, 105, 0.25);
 
           border: 1px solid rgba(255, 255, 255, 0.22);
@@ -73,10 +73,20 @@ export function GenerateButton({
           transition: transform var(--transition), box-shadow var(--transition), filter var(--transition), opacity var(--transition);
         }
 
+        .gen-btn:focus-visible {
+          outline: 2px solid var(--ring);
+          outline-offset: 3px;
+        }
+
         .gen-btn:disabled {
           opacity: 0.55;
           cursor: not-allowed;
           box-shadow: none;
+          filter: saturate(0.6);
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .gen-btn, .gen-btn-svg { transition: none; animation: none !important; }
         }
 
         .gen-btn:not(:disabled):hover {
@@ -84,7 +94,7 @@ export function GenerateButton({
           filter: brightness(1.06);
           box-shadow:
             inset 0px 1px 0px rgba(255, 255, 255, 0.45),
-            0px 8px 20px -4px rgba(37, 99, 235, 0.45),
+            0px 8px 20px -4px rgba(8, 145, 178, 0.45),
             0px 4px 10px -2px rgba(5, 150, 105, 0.35);
         }
 

@@ -262,7 +262,7 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({
               <SlidersHorizontal className="size-3.5" />
               <span>Inspector</span>
               {selectedCell && (
-                <span className="size-1.5 rounded-full bg-indigo-500" />
+                <span className="size-1.5 rounded-full bg-brand-500" />
               )}
             </TabsTrigger>
           </TabsList>
@@ -518,7 +518,7 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = ({
                   key={i}
                   className={`px-3 py-2 rounded-xl leading-relaxed ${
                     msg.sender === "user"
-                      ? "bg-indigo-600 text-white ml-6 text-right"
+                      ? "bg-brand-600 text-white ml-6 text-right"
                       : "bg-muted/70 text-foreground mr-4"
                   }`}
                 >
