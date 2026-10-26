@@ -115,6 +115,12 @@ class ScheduledCell(BaseModel):
     integration_tags: list[str] = Field(
         default_factory=list, description="Human-readable horizontal (↔) and vertical (↕) links"
     )
+    date: Optional[str] = Field(default=None, description="ISO date of the session (real timetables)")
+    kind: Optional[str] = Field(default=None, description="TEACHING, ROTATION or EVENT (real timetables)")
+    session_id: Optional[UUID] = Field(default=None, description="Uploaded session this cell comes from")
+    moved_from: Optional[str] = Field(
+        default=None, description="Where the integrator moved this lecture from, e.g. 'Week 3 · Wed 29/10 09:00'"
+    )
 
 
 DEFAULT_SESSION = "2026-2027"
@@ -140,6 +146,13 @@ class TimetableSchedule(BaseModel):
     program: str = "MBBS"
     cohort: Optional[str] = None
     cohort_label: Optional[str] = None
+    # Real-timetable (template) runs only
+    template: bool = Field(default=False, description="Built from the uploaded timetable's exact sessions")
+    week_dates: dict[int, str] = Field(default_factory=dict, description="day_of_week -> ISO date for this week")
+    moves: list[dict[str, Any]] = Field(default_factory=list, description="Every lecture the integrator moved (whole module)")
+    integration_metrics: dict[str, Any] = Field(
+        default_factory=dict, description="Linked-pair distances before and after integration (whole module)"
+    )
 
 
 def _resolve_practical_station_label(venue: str, week_number: int, topics: list[ParsedTopic]) -> str:
