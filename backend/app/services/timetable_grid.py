@@ -100,7 +100,7 @@ def extract_teachers(text: str) -> list[str]:
             continue
         rest = re.split(r"[/()\n,;:\\|]|\s[-–]\s", text[m.end():], maxsplit=1)[0]
         tokens: list[str] = []
-        for tok in re.findall(r"[A-Za-z]+\.?", rest):
+        for tok in re.findall(r"[A-Za-z][A-Za-z0-9]*\.?", rest):
             word = tok.rstrip(".")
             if word.lower() in _NAME_STOP or len(tokens) >= 3:
                 break
@@ -121,7 +121,8 @@ def extract_teachers(text: str) -> list[str]:
 
 
 def _letters(name: str) -> str:
-    return re.sub(r"[^a-z]", "", _TITLE_RE.sub("", name).lower())
+    # digits are kept so coded names ('Dr. T01', 'Dr. T10') stay distinct
+    return re.sub(r"[^a-z0-9]", "", _TITLE_RE.sub("", name).lower())
 
 
 def _skeleton(name: str) -> str:
