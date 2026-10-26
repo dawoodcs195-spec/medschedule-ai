@@ -100,6 +100,154 @@ def set_cell_xml_properties(
     cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
 
 
+def _mins(t: str) -> int:
+    h, m = t.split(":")
+    return int(h) * 60 + int(m)
+
+
+def _clock(t: str) -> str:
+    """'13:30' -> '01:30' (the client's timetables write afternoon times on a 12-hour clock)."""
+    h, m = t.split(":")
+    hh = int(h)
+    return f"{hh - 12 if hh > 12 else hh:02d}:{m}"
+
+
+def time_boundaries(cells: list[ScheduledCell]) -> list[str]:
+    """Sorted column boundaries from every session's start/end (defaults to the standard day)."""
+    pts = {"08:00", "09:00", "10:00", "11:00", "12:00", "12:30", "14:00"}
+    for c in cells:
+        pts.add(c.time_start)
+        pts.add(c.time_end)
+    return sorted(pts, key=_mins)
+
+
+def _format_cell(c: ScheduledCell) -> str:
+    if c.session_type in ("BREAK", "HALF_DAY"):
+        return c.topic_title
+    if c.batch_assignments and (c.kind == "ROTATION" or c.discipline == "Multi-Disciplinary"):
+        lines = [c.topic_title]
+        for ba in c.batch_assignments:
+            fac = f" ({ba.faculty})" if ba.faculty else ""
+            lines.append(f"{ba.batch}: {ba.station}{fac}")
+        return "\n".join(lines)
+    parts = [c.session_type, c.discipline, c.topic_title]
+    if c.faculty_name:
+        parts.append(c.faculty_name)
+    return "\n".join(parts)
+
+
+def _write_span_grid(doc: "docx.Document", schedule: TimetableSchedule) -> None:
+    bounds = time_boundaries(schedule.cells)
+    cols = list(zip(bounds, bounds[1:]))
+    total = sum(COL_WIDTHS_DXA)
+    day_w = COL_WIDTHS_DXA[0]
+    # width by duration, but never narrower than a readable minimum
+    raw = [max(25, _mins(e) - _mins(s)) for s, e in cols]
+    avail = total - day_w
+    min_w = 700
+    widths = [max(min_w, int(avail * r / sum(raw))) for r in raw]
+    scale = avail / sum(widths)
+    widths = [int(w * scale) for w in widths]
+    widths_all = [day_w] + widths
+
+    days_present = sorted({c.day_of_week for c in schedule.cells}) or [1, 2, 3, 4, 5, 6]
+    days_list = sorted(set(days_present) | {1, 2, 3, 4, 5, 6})
+    table = doc.add_table(rows=1 + len(days_list), cols=1 + len(cols))
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    table.autofit = False
+    tblPr = table._tbl.tblPr
+    tblGrid = OxmlElement("w:tblGrid")
+    for width in widths_all:
+        gridCol = OxmlElement("w:gridCol")
+        gridCol.set(qn("w:w"), str(width))
+        tblGrid.append(gridCol)
+    table._tbl.insert(1, tblGrid)
+    tblPr.append(parse_xml(f"""
+        <w:tblBorders {nsdecls("w")}>
+            <w:top w:val="single" w:sz="6" w:space="0" w:color="94A3B8"/>
+            <w:bottom w:val="single" w:sz="8" w:space="0" w:color="0F172A"/>
+            <w:left w:val="single" w:sz="6" w:space="0" w:color="94A3B8"/>
+            <w:right w:val="single" w:sz="6" w:space="0" w:color="94A3B8"/>
+            <w:insideH w:val="single" w:sz="4" w:space="0" w:color="CBD5E1"/>
+            <w:insideV w:val="single" w:sz="4" w:space="0" w:color="CBD5E1"/>
+        </w:tblBorders>
+    """))
+
+    def write(cell, text: str, size: float, bold: bool = False) -> None:
+        p = cell.paragraphs[0]
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.space_after = Pt(0)
+        r = p.add_run(text)
+        r.font.name = "Arial"
+        r.font.size = Pt(size)
+        r.font.bold = bold
+
+    hdr = table.rows[0]
+    hdr._tr.get_or_add_trPr().append(parse_xml(f'<w:trHeight {nsdecls("w")} w:val="280" w:hRule="atLeast"/>'))
+    for c_idx, text in enumerate(["DAYS"] + [f"{_clock(s)} – {_clock(e)}" for s, e in cols]):
+        cell = hdr.cells[c_idx]
+        set_cell_xml_properties(cell, widths_all[c_idx], SHADING_PALETTE["HEADER"], top_pad=60, bottom_pad=60)
+        write(cell, text, 7.0, bold=True)
+
+    for r_idx, d in enumerate(days_list, start=1):
+        row = table.rows[r_idx]
+        row._tr.get_or_add_trPr().append(parse_xml(f'<w:trHeight {nsdecls("w")} w:val="560" w:hRule="atLeast"/>'))
+        label = DAYS.get(d, str(d))
+        date = schedule.week_dates.get(d) if schedule.week_dates else None
+        if date:
+            try:
+                y, m, dd = date.split("-")
+                label += f"\n{dd}/{m}/{y}"
+            except ValueError:
+                pass
+        set_cell_xml_properties(row.cells[0], day_w, SHADING_PALETTE["HEADER"])
+        write(row.cells[0], label, 7.0, bold=True)
+
+        day_cells = sorted((c for c in schedule.cells if c.day_of_week == d), key=lambda c: (_mins(c.time_start), -_mins(c.time_end)))
+        # column index range of each session
+        placed: list[tuple[int, int, list[ScheduledCell]]] = []
+        for c in day_cells:
+            first = next((k for k, (s, _) in enumerate(cols) if _mins(s) >= _mins(c.time_start)), None)
+            last = max((k for k, (_, e) in enumerate(cols) if _mins(e) <= _mins(c.time_end)), default=None)
+            if first is None or last is None or last < first:
+                continue
+            if placed and first <= placed[-1][1]:
+                # overlaps the previous session (should not happen): show both in one cell
+                prev = placed[-1]
+                placed[-1] = (prev[0], max(prev[1], last), prev[2] + [c])
+                continue
+            placed.append((first, last, [c]))
+        k = 0
+        spans: list[tuple[int, int, list[ScheduledCell]]] = []
+        for first, last, items in placed:
+            while k < first:
+                spans.append((k, k, []))
+                k += 1
+            spans.append((first, last, items))
+            k = last + 1
+        while k < len(cols):
+            spans.append((k, k, []))
+            k += 1
+        for first, last, items in spans:
+            cell = row.cells[1 + first]
+            if last > first:
+                cell = cell.merge(row.cells[1 + last])
+            width = sum(widths[first:last + 1])
+            main = items[0] if items else None
+            if main is None:
+                bg = "FFFFFF"
+            elif main.session_type in ("BREAK", "HALF_DAY"):
+                bg = SHADING_PALETTE[main.session_type]
+            else:
+                bg = SHADING_PALETTE.get(main.category, "FFFFFF")
+            set_cell_xml_properties(cell, width, bg)
+            if items:
+                institutional = main.session_type in ("BREAK", "HALF_DAY")
+                write(cell, "\n\n".join(_format_cell(c) for c in items), 8.5 if institutional else 6.0,
+                      bold=institutional)
+
+
 def generate_landscape_docx(
     schedule: TimetableSchedule,
     legend_entries: list[LegendEntry] = [],
@@ -143,224 +291,10 @@ def generate_landscape_docx(
     run2.font.bold = True
     run2.font.color.rgb = RGBColor(30, 41, 59)
 
-    # 3. Timetable Grid Table (1 Header row + 6 Days = 7 rows, 7 columns)
-    headers = [
-        "DAYS",
-        "08:00 – 09:00",
-        "09:00 – 10:00",
-        "10:00 - 11:00",
-        "11:00 - 12:00",
-        "12:00 - 12:30",
-        "12:30 – 02:00",
-    ]
-
-    table = doc.add_table(rows=7, cols=7)
-    table.alignment = WD_TABLE_ALIGNMENT.CENTER
-    table.autofit = False
-
-    # Force tblGrid definition
-    tblPr = table._tbl.tblPr
-    tblGrid = OxmlElement("w:tblGrid")
-    for width in COL_WIDTHS_DXA:
-        gridCol = OxmlElement("w:gridCol")
-        gridCol.set(qn("w:w"), str(width))
-        tblGrid.append(gridCol)
-    table._tbl.insert(1, tblGrid)
-
-    # Borders XML
-    borders_xml = parse_xml(f"""
-        <w:tblBorders {nsdecls("w")}>
-            <w:top w:val="single" w:sz="6" w:space="0" w:color="94A3B8"/>
-            <w:bottom w:val="single" w:sz="8" w:space="0" w:color="0F172A"/>
-            <w:left w:val="single" w:sz="6" w:space="0" w:color="94A3B8"/>
-            <w:right w:val="single" w:sz="6" w:space="0" w:color="94A3B8"/>
-            <w:insideH w:val="single" w:sz="4" w:space="0" w:color="CBD5E1"/>
-            <w:insideV w:val="single" w:sz="4" w:space="0" w:color="CBD5E1"/>
-        </w:tblBorders>
-    """)
-    tblPr.append(borders_xml)
-
-    # Header Row Styling
-    hdr_row = table.rows[0]
-    trPr = hdr_row._tr.get_or_add_trPr()
-    trPr.append(parse_xml(f'<w:trHeight {nsdecls("w")} w:val="280" w:hRule="atLeast"/>'))
-
-    for c_idx, text in enumerate(headers):
-        cell = hdr_row.cells[c_idx]
-        set_cell_xml_properties(cell, COL_WIDTHS_DXA[c_idx], SHADING_PALETTE["HEADER"], top_pad=60, bottom_pad=60)
-        p = cell.paragraphs[0]
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p.paragraph_format.space_before = Pt(0)
-        p.paragraph_format.space_after = Pt(0)
-        r = p.add_run(text)
-        r.font.name = "Arial"
-        r.font.size = Pt(7.5)
-        r.font.bold = True
-        r.font.color.rgb = RGBColor(15, 23, 42)
-
-    # 4. Fill Table Rows (Days 1 to 6)
-    days_list = [1, 2, 3, 4, 5, 6]
-
-    for r_idx, d in enumerate(days_list, start=1):
-        row = table.rows[r_idx]
-        trPr = row._tr.get_or_add_trPr()
-        trPr.append(parse_xml(f'<w:trHeight {nsdecls("w")} w:val="560" w:hRule="atLeast"/>'))
-
-        day_name = DAYS[d]
-        day_cells = [c for c in schedule.cells if c.day_of_week == d]
-
-        # Col 0: Day Name
-        cell_day = row.cells[0]
-        set_cell_xml_properties(cell_day, COL_WIDTHS_DXA[0], SHADING_PALETTE["HEADER"])
-        p_day = cell_day.paragraphs[0]
-        p_day.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p_day.paragraph_format.space_before = Pt(0)
-        p_day.paragraph_format.space_after = Pt(0)
-        r_day = p_day.add_run(day_name)
-        r_day.font.name = "Arial"
-        r_day.font.size = Pt(7.5)
-        r_day.font.bold = True
-
-        # Helper to format cell content
-        def format_scheduled_cell(c: ScheduledCell) -> str:
-            if c.batch_assignments:
-                lines = [c.topic_title]
-                for ba in c.batch_assignments:
-                    lines.append(f"{ba.batch}: {ba.station}")
-                return "\n".join(lines)
-            parts = [c.session_type, c.discipline, c.topic_title]
-            if c.faculty_name:
-                parts.append(c.faculty_name)
-            return "\n".join(parts)
-
-        # Check for 2-hour morning practical/SGD (10:00 - 12:00)
-        slot_10_12 = next((c for c in day_cells if c.time_start == "10:00" and c.time_end == "12:00"), None)
-
-        if d == FRIDAY:
-            # Friday: 08-09, 09-10, 10-11, 11-12, then HALF DAY spans cols 5 & 6
-            c_08 = next((c for c in day_cells if c.time_start == "08:00"), None)
-            c_09 = next((c for c in day_cells if c.time_start == "09:00"), None)
-            c_10 = next((c for c in day_cells if c.time_start == "10:00"), None)
-            c_11 = next((c for c in day_cells if c.time_start == "11:00"), None)
-
-            for col_idx, item in [(1, c_08), (2, c_09), (3, c_10), (4, c_11)]:
-                cell = row.cells[col_idx]
-                bg = SHADING_PALETTE.get(item.category if item else "INSTITUTIONAL", "FFFFFF")
-                set_cell_xml_properties(cell, COL_WIDTHS_DXA[col_idx], bg)
-                p = cell.paragraphs[0]
-                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                p.paragraph_format.space_before = Pt(0)
-                p.paragraph_format.space_after = Pt(0)
-                if item:
-                    r = p.add_run(format_scheduled_cell(item))
-                    r.font.name = "Arial"
-                    r.font.size = Pt(6.5)
-
-            # Merge cols 5 and 6 for Friday HALF DAY
-            cell_hd1 = row.cells[5]
-            cell_hd2 = row.cells[6]
-            merged_hd = cell_hd1.merge(cell_hd2)
-            set_cell_xml_properties(
-                merged_hd,
-                COL_WIDTHS_DXA[5] + COL_WIDTHS_DXA[6],
-                SHADING_PALETTE["HALF_DAY"],
-            )
-            p_hd = merged_hd.paragraphs[0]
-            p_hd.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            p_hd.paragraph_format.space_before = Pt(0)
-            p_hd.paragraph_format.space_after = Pt(0)
-            r_hd = p_hd.add_run("HALF DAY")
-            r_hd.font.name = "Arial"
-            r_hd.font.size = Pt(9)
-            r_hd.font.bold = True
-
-        else:
-            # Mon-Thu & Sat
-            c_08 = next((c for c in day_cells if c.time_start == "08:00"), None)
-            c_09 = next((c for c in day_cells if c.time_start == "09:00"), None)
-
-            # Slot 1: 08:00 - 09:00
-            cell_08 = row.cells[1]
-            bg_08 = SHADING_PALETTE.get(c_08.category if c_08 else "INSTITUTIONAL", "FFFFFF")
-            set_cell_xml_properties(cell_08, COL_WIDTHS_DXA[1], bg_08)
-            p_08 = cell_08.paragraphs[0]
-            p_08.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            p_08.paragraph_format.space_before = Pt(0)
-            p_08.paragraph_format.space_after = Pt(0)
-            if c_08:
-                r = p_08.add_run(format_scheduled_cell(c_08))
-                r.font.name = "Arial"
-                r.font.size = Pt(6.5)
-
-            # Slot 2: 09:00 - 10:00
-            cell_09 = row.cells[2]
-            bg_09 = SHADING_PALETTE.get(c_09.category if c_09 else "INSTITUTIONAL", "FFFFFF")
-            set_cell_xml_properties(cell_09, COL_WIDTHS_DXA[2], bg_09)
-            p_09 = cell_09.paragraphs[0]
-            p_09.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            p_09.paragraph_format.space_before = Pt(0)
-            p_09.paragraph_format.space_after = Pt(0)
-            if c_09:
-                r = p_09.add_run(format_scheduled_cell(c_09))
-                r.font.name = "Arial"
-                r.font.size = Pt(6.5)
-
-            # Slots 3 & 4: 10:00 - 12:00
-            if slot_10_12:
-                # Merge cols 3 and 4 for 2-hour practical/SGD block
-                cell_10 = row.cells[3]
-                cell_11 = row.cells[4]
-                merged_10_12 = cell_10.merge(cell_11)
-                bg_10_12 = SHADING_PALETTE.get(slot_10_12.category, "FFFFFF")
-                set_cell_xml_properties(merged_10_12, COL_WIDTHS_DXA[3] + COL_WIDTHS_DXA[4], bg_10_12)
-                p_10_12 = merged_10_12.paragraphs[0]
-                p_10_12.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                p_10_12.paragraph_format.space_before = Pt(0)
-                p_10_12.paragraph_format.space_after = Pt(0)
-                r = p_10_12.add_run(format_scheduled_cell(slot_10_12))
-                r.font.name = "Arial"
-                r.font.size = Pt(6.5)
-            else:
-                c_10 = next((c for c in day_cells if c.time_start == "10:00"), None)
-                c_11 = next((c for c in day_cells if c.time_start == "11:00"), None)
-                for col_idx, item in [(3, c_10), (4, c_11)]:
-                    cell = row.cells[col_idx]
-                    bg = SHADING_PALETTE.get(item.category if item else "INSTITUTIONAL", "FFFFFF")
-                    set_cell_xml_properties(cell, COL_WIDTHS_DXA[col_idx], bg)
-                    p = cell.paragraphs[0]
-                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    p.paragraph_format.space_before = Pt(0)
-                    p.paragraph_format.space_after = Pt(0)
-                    if item:
-                        r = p.add_run(format_scheduled_cell(item))
-                        r.font.name = "Arial"
-                        r.font.size = Pt(6.5)
-
-            # Slot 5: 12:00 - 12:30 BREAK
-            cell_brk = row.cells[5]
-            set_cell_xml_properties(cell_brk, COL_WIDTHS_DXA[5], SHADING_PALETTE["BREAK"])
-            p_brk = cell_brk.paragraphs[0]
-            p_brk.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            p_brk.paragraph_format.space_before = Pt(0)
-            p_brk.paragraph_format.space_after = Pt(0)
-            r_brk = p_brk.add_run("BREAK")
-            r_brk.font.name = "Arial"
-            r_brk.font.size = Pt(7.5)
-            r_brk.font.bold = True
-
-            # Slot 6: 12:30 - 02:00 (Practical or SGD)
-            c_afternoon = next((c for c in day_cells if c.time_start == "12:30"), None)
-            cell_aft = row.cells[6]
-            bg_aft = SHADING_PALETTE.get(c_afternoon.category if c_afternoon else "INSTITUTIONAL", "FFFFFF")
-            set_cell_xml_properties(cell_aft, COL_WIDTHS_DXA[6], bg_aft)
-            p_aft = cell_aft.paragraphs[0]
-            p_aft.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            p_aft.paragraph_format.space_before = Pt(0)
-            p_aft.paragraph_format.space_after = Pt(0)
-            if c_afternoon:
-                r_aft = p_aft.add_run(format_scheduled_cell(c_afternoon))
-                r_aft.font.name = "Arial"
-                r_aft.font.size = Pt(6.5)
+    # 3. Timetable grid: one column per time span found in the week (08:00-09:00, 09:00-11:00,
+    #    12:30-01:30, 01:30-02:00 ...); a session spans as many columns as its time covers, so a
+    #    2-hour practical or a split afternoon from the uploaded timetable never disappears.
+    _write_span_grid(doc, schedule)
 
     # 5. Footer Legend Keys
     if legend_entries:
