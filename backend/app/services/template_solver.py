@@ -515,12 +515,21 @@ def _optimise(prob: _Problem, time_limit: float) -> tuple[list[int], str]:
     t0 = time.monotonic()
     ident = list(range(len(prob.lectures)))
     base_ok = _feasible(prob, ident)
-    current = _solve_greedy(prob, ident) if base_ok else ident
     status = "GREEDY"
+    if base_ok:
+        current = _solve_greedy(prob, ident)
+    else:
+        # A teacher shared with another class clashes at an original time: find any valid plan first.
+        found, st = _solve_cpsat(prob, max(2.0, time_limit / 2))
+        if found is None or not _feasible(prob, found):
+            return ident, f"UNRESOLVED_CLASH ({st})"
+        current = _solve_greedy(prob, found)
     weeks = sorted({sl.week for sl in prob.slots})
     windows = [set(weeks[k:k + 2]) for k in range(max(1, len(weeks) - 1))]
     # deterministic work units per window; ~1 unit is ~1 s on a 4-core machine
-    per_window = max(0.3, (time_limit - (time.monotonic() - t0)) / max(1, len(windows)) * 0.8)
+    # Deterministic work units per window (about 1 s each on 4 cores; slower on a 1-vCPU serverless box,
+    # so the budget is kept small: the greedy pass already does most of the work).
+    per_window = min(1.5, max(0.3, (time_limit - (time.monotonic() - t0)) / max(1, len(windows)) * 0.3))
     solved_any = False
     for win in windows:
         if time.monotonic() - t0 > time_limit * 1.5:
@@ -847,3 +856,78 @@ def _tag_links(result: TemplateResult, week: int, cells: list[Any]) -> None:
             if tag.lower() not in {t.lower() for t in tags}:
                 tags.append(tag)
         c.integration_tags = tags[:6]
+
+
+# ---------------------------------------------------------------------------
+# Endpoint helpers (/schedule/generate, /schedule/original, /schedule/generate-all)
+# ---------------------------------------------------------------------------
+
+DEFAULT_TEMPLATE_TIME_LIMIT = 20.0
+
+
+def _class_meta(cohort: Optional[str], topics: list[ParsedTopic], academic_year: int,
+                program: Optional[str]) -> tuple[int, str]:
+    if cohort and "-" in cohort:
+        prog, _, year = cohort.partition("-")
+        try:
+            return int(year), prog
+        except ValueError:
+            pass
+    own = [t for t in topics if cohort is None or topic_cohort(t) == cohort]
+    if own:
+        return own[0].academic_year or academic_year, (own[0].program or program or "MBBS").upper()
+    return academic_year, (program or "MBBS").upper()
+
+
+def resolve_cohort(sessions: list[ParsedSession], cohort: Optional[str]) -> Optional[str]:
+    keys = list_session_cohorts(sessions)
+    if cohort in keys:
+        return cohort
+    if cohort is None or None in keys:
+        return keys[0]
+    return cohort
+
+
+def solve_template_schedule(
+    topics: list[ParsedTopic], sessions: list[ParsedSession], approved_links: list[ProposedLink],
+    module_code: str, module_title: str, academic_year: int, week_number: int,
+    cohort: Optional[str] = None, session: Optional[str] = None, max_week_shift: Optional[int] = None,
+    time_limit_seconds: float = DEFAULT_TEMPLATE_TIME_LIMIT, original: bool = False,
+):
+    key = resolve_cohort(sessions, cohort)
+    year, program = _class_meta(key, topics, academic_year, None)
+    result = integrate_template(sessions, approved_links, topics, cohort=key, max_week_shift=max_week_shift,
+                                time_limit_seconds=time_limit_seconds, integrate=not original)
+    sched = week_schedule(result, week_number, module_code, module_title, year, program, session, original=original)
+    return sched
+
+
+def solve_template_all(
+    topics: list[ParsedTopic], sessions: list[ParsedSession], approved_links: list[ProposedLink],
+    module_code: str, module_title: str, week_number: int, cohorts: Optional[list[str]] = None,
+    cohort_modules: Optional[dict[str, Any]] = None, session: Optional[str] = None,
+    max_week_shift: Optional[int] = None, time_limit_seconds: float = DEFAULT_TEMPLATE_TIME_LIMIT,
+):
+    """Every class with a real timetable, solved in turn; a teacher shared by classes is never
+    double-booked (each class sees the teaching times already taken by the classes before it)."""
+    keys = cohorts or [k for k in list_session_cohorts(sessions)]
+    busy: dict[str, list[tuple[str, int, int]]] = defaultdict(list)
+    per_class = max(4.0, time_limit_seconds / max(1, len(keys)))
+    out, warnings = [], []
+    for key in keys:
+        own = sessions_for(sessions, key)
+        if not own:
+            continue
+        year, program = _class_meta(key, topics, 1, None)
+        mod = (cohort_modules or {}).get(key or "")
+        result = integrate_template(sessions, approved_links, topics, cohort=key, max_week_shift=max_week_shift,
+                                    time_limit_seconds=per_class, busy=dict(busy))
+        warnings.extend(result.warnings)
+        out.append(week_schedule(
+            result, week_number,
+            (getattr(mod, "module_code", None) or module_code), (getattr(mod, "module_title", None) or module_title),
+            year, program, getattr(mod, "session", None) or session,
+        ))
+        for k, v in teacher_busy_from(result).items():
+            busy[k].extend(v)
+    return out, warnings

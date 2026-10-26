@@ -244,9 +244,13 @@ def recompute_schedule_analytics(schedule: TimetableSchedule) -> TimetableSchedu
         contact_hours_by_discipline[c.discipline] = round(contact_hours_by_discipline.get(c.discipline, 0.0) + dur, 1)
         classes_by_discipline[c.discipline] += 1
         classes_by_session_type[c.session_type] += 1
-        if c.faculty_name:
-            faculty_hours[c.faculty_name] = round(faculty_hours.get(c.faculty_name, 0.0) + dur, 1)
-            classes_by_faculty[c.faculty_name] += 1
+        # Co-teachers ('Dr. A / Dr. B') and rotation station teachers each carry the session.
+        names = [n.strip() for n in (c.faculty_name or "").split(" / ") if n.strip()]
+        for b in c.batch_assignments:
+            names.extend(n.strip() for n in (b.faculty or "").split(" / ") if n.strip() and n.strip() not in names)
+        for name in names:
+            faculty_hours[name] = round(faculty_hours.get(name, 0.0) + dur, 1)
+            classes_by_faculty[name] += 1
         if not c.batch_assignments:
             topic_counts[(c.discipline, c.topic_title)] += 1
         bracket = f"{c.time_start} - {c.time_end}"

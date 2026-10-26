@@ -18,10 +18,11 @@ from app.core.constants import CLINICAL_DEPARTMENTS, PRACTICAL_VENUES, SGD_STATI
 from app.core.database import db_available, get_db
 from app.core.gemini import gemini_enabled
 from app.models.schemas import (
+    ParsedSession,
     Department, DepartmentCreate, ExtractedModuleMeta, IngestTextRequest, LegendEntry,
     ParsedTopic, ParseResponse,
 )
-from app.services import analytics, copilot, exporter, integrator, parser, repository, solver
+from app.services import analytics, copilot, exporter, integrator, parser, repository, solver, template_solver
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -280,10 +281,33 @@ class GenerateScheduleRequest(BaseModel):
     time_limit_seconds: float = 10.0
     cohort: Optional[str] = Field(default=None, description="Only schedule this class, e.g. 'MBBS-2'")
     session: Optional[str] = Field(default=None, description="Academic session for the header, e.g. '2026-2027'")
+    sessions: list[ParsedSession] = Field(
+        default_factory=list,
+        description="Real timetable sessions from /ingest (when present, the uploaded structure is kept and "
+        "only 1-hour lectures are re-sequenced)",
+    )
+    max_week_shift: Optional[int] = Field(
+        default=None, ge=0, description="Real timetables: how many weeks a lecture may move (None = unlimited)"
+    )
+    template_time_limit_seconds: float = Field(default=template_solver.DEFAULT_TEMPLATE_TIME_LIMIT, gt=0, le=60)
+
+
+def _template_sessions(sessions: list[ParsedSession], cohort: Optional[str]) -> list[ParsedSession]:
+    if not sessions:
+        return []
+    key = template_solver.resolve_cohort(sessions, cohort)
+    return template_solver.sessions_for(sessions, key)
 
 
 @router.post("/schedule/generate", response_model=solver.TimetableSchedule, tags=["scheduling"])
 def generate_schedule(req: GenerateScheduleRequest):
+    if _template_sessions(req.sessions, req.cohort):
+        return template_solver.solve_template_schedule(
+            topics=req.topics, sessions=req.sessions, approved_links=req.approved_links,
+            module_code=req.module_code, module_title=req.module_title, academic_year=req.academic_year,
+            week_number=req.week_number, cohort=req.cohort, session=req.session,
+            max_week_shift=req.max_week_shift, time_limit_seconds=req.template_time_limit_seconds,
+        )
     try:
         return solver.solve_schedule(
             topics=req.topics,
@@ -312,11 +336,35 @@ class GenerateAllRequest(BaseModel):
     )
     time_limit_seconds: float = Field(default=8.0, description="Solver budget shared by all classes")
     session: Optional[str] = Field(default=None, description="Academic session for every class without its own")
+    sessions: list[ParsedSession] = Field(default_factory=list, description="Real timetable sessions from /ingest")
+    max_week_shift: Optional[int] = Field(default=None, ge=0)
+    template_time_limit_seconds: float = Field(default=template_solver.DEFAULT_TEMPLATE_TIME_LIMIT, gt=0, le=60)
 
 
 @router.post("/schedule/generate-all", response_model=solver.MultiCohortSchedule, tags=["scheduling"])
 def generate_all_schedules(req: GenerateAllRequest):
     """Solve one week for every class at once; a teacher shared by classes is never double-booked."""
+    if req.sessions:
+        keys = req.cohorts or solver.list_cohorts(req.topics) or template_solver.list_session_cohorts(req.sessions)
+        with_grid = [k for k in keys if _template_sessions(req.sessions, k)]
+        without = [k for k in keys if k not in with_grid]
+        scheds, warnings = template_solver.solve_template_all(
+            topics=req.topics, sessions=req.sessions, approved_links=req.approved_links,
+            module_code=req.module_code, module_title=req.module_title, week_number=req.week_number,
+            cohorts=with_grid or None, cohort_modules=req.cohort_modules, session=req.session,
+            max_week_shift=req.max_week_shift, time_limit_seconds=req.template_time_limit_seconds,
+        )
+        if without:  # classes uploaded as free-form syllabi still use the week generator
+            rest = solver.solve_all_cohorts(
+                topics=req.topics, approved_links=req.approved_links, module_code=req.module_code,
+                module_title=req.module_title, week_number=req.week_number, cohorts=without,
+                time_limit_seconds=req.time_limit_seconds, cohort_modules=req.cohort_modules, session=req.session,
+            )
+            scheds += rest.schedules
+            warnings += rest.warnings
+        order = {k: i for i, k in enumerate(keys)}
+        scheds.sort(key=lambda s: order.get(s.cohort, len(order)))
+        return solver.MultiCohortSchedule(schedules=scheds, shared_teacher_sessions=0, warnings=warnings)
     try:
         return solver.solve_all_cohorts(
             topics=req.topics,
@@ -335,6 +383,12 @@ def generate_all_schedules(req: GenerateAllRequest):
 
 @router.post("/schedule/original", response_model=solver.TimetableSchedule, tags=["scheduling"])
 def get_original_uploaded_schedule(req: GenerateScheduleRequest):
+    if _template_sessions(req.sessions, req.cohort):
+        return template_solver.solve_template_schedule(
+            topics=req.topics, sessions=req.sessions, approved_links=[],
+            module_code=req.module_code, module_title=req.module_title, academic_year=req.academic_year,
+            week_number=req.week_number, cohort=req.cohort, session=req.session, original=True,
+        )
     return solver.build_original_schedule(
         topics=req.topics,
         module_code=req.module_code,
@@ -355,17 +409,20 @@ class ReportRequest(BaseModel):
     topics: list[ParsedTopic]
     links: list[integrator.ProposedLink] = []
     schedules: list[solver.TimetableSchedule] = []
+    sessions: list[ParsedSession] = Field(
+        default_factory=list, description="Real timetable sessions: counts every lecture and rotation station"
+    )
 
 
 @router.post("/analytics/report", response_model=analytics.CurriculumReport, tags=["analytics"])
 def analytics_report(req: ReportRequest):
     """Classes per subject, coverage per topic and teacher load across the whole upload."""
-    return analytics.build_report(req.topics, req.links, req.schedules)
+    return analytics.build_report(req.topics, req.links, req.schedules, req.sessions)
 
 
 @router.post("/export/report-docx", tags=["export"])
 def export_report_docx(req: ReportRequest):
-    report = analytics.build_report(req.topics, req.links, req.schedules)
+    report = analytics.build_report(req.topics, req.links, req.schedules, req.sessions)
     return Response(
         content=exporter.generate_report_docx(report),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
