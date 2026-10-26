@@ -145,6 +145,7 @@ export async function generateSchedule(params: {
   academic_year: number;
   week_number: number;
   cohort?: string | null;
+  session?: string | null;
 }): Promise<TimetableSchedule> {
   const res = await fetch(`${API_BASE}/schedule/generate`, {
     method: "POST",
@@ -162,6 +163,7 @@ export async function generateOriginalSchedule(params: {
   academic_year: number;
   week_number: number;
   cohort?: string | null;
+  session?: string | null;
 }): Promise<TimetableSchedule> {
   const res = await fetch(`${API_BASE}/schedule/original`, {
     method: "POST",
@@ -180,7 +182,11 @@ export async function generateAllSchedules(params: {
   module_title: string;
   week_number: number;
   cohorts?: string[];
-  cohort_modules?: Record<string, { module_title?: string | null; module_code?: string | null }>;
+  cohort_modules?: Record<
+    string,
+    { module_title?: string | null; module_code?: string | null; session?: string | null }
+  >;
+  session?: string | null;
 }): Promise<MultiCohortSchedule> {
   const res = await fetch(`${API_BASE}/schedule/generate-all`, {
     method: "POST",
