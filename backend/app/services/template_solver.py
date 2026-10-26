@@ -480,7 +480,7 @@ def _solve_cpsat(prob: _Problem, time_limit: float, deterministic: bool = True,
         # plan. The wall-clock cap is only a safety net on a very slow machine.
         solver.parameters.max_deterministic_time = time_limit
         solver.parameters.interleave_search = True
-        solver.parameters.max_time_in_seconds = time_limit * 4
+        solver.parameters.max_time_in_seconds = time_limit * 10  # safety net only
     else:
         solver.parameters.max_time_in_seconds = time_limit
     status = solver.Solve(model)
@@ -527,12 +527,12 @@ def _optimise(prob: _Problem, time_limit: float) -> tuple[list[int], str]:
     weeks = sorted({sl.week for sl in prob.slots})
     windows = [set(weeks[k:k + 2]) for k in range(max(1, len(weeks) - 1))]
     # deterministic work units per window; ~1 unit is ~1 s on a 4-core machine
-    # Deterministic work units per window (about 1 s each on 4 cores; slower on a 1-vCPU serverless box,
-    # so the budget is kept small: the greedy pass already does most of the work).
-    per_window = min(1.5, max(0.3, (time_limit - (time.monotonic() - t0)) / max(1, len(windows)) * 0.3))
+    # Deterministic work units per window, derived from the time limit only (never from elapsed
+    # wall time), so every server instance runs exactly the same search and returns the same plan.
+    per_window = min(1.5, max(0.3, time_limit / max(1, len(windows)) * 0.3))
     solved_any = False
     for win in windows:
-        if time.monotonic() - t0 > time_limit * 1.5:
+        if time.monotonic() - t0 > time_limit * 3:  # safety net on a pathological machine
             break
         free = {i for i, k in enumerate(current) if prob.slots[k].week in win}
         if len(free) < 2:
