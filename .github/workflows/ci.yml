@@ -55,3 +55,5 @@ jobs:
         run: python tests/smoke_full_pipeline.py
       - name: Client requirement tests (multi-class upload, integration, copilot, report)
         run: python tests/test_client_requirements.py
+      - name: Upload-form field tests (session, module override, detected class)
+        run: python tests/test_upload_fields.py

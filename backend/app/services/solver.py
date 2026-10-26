@@ -117,13 +117,22 @@ class ScheduledCell(BaseModel):
     )
 
 
+DEFAULT_SESSION = "2026-2027"
+
+
+def clean_session(value: Optional[str]) -> str:
+    """Any non-empty label is accepted (e.g. '2026-2027'); blank falls back to the default."""
+    text = (value or "").strip()
+    return text or DEFAULT_SESSION
+
+
 class TimetableSchedule(BaseModel):
     module_code: str
     module_title: str
     academic_year: int
     week_number: int = 1
     total_weeks: int = 1
-    session: str = "2026-2027"
+    session: str = DEFAULT_SESSION
     cells: list[ScheduledCell]
     solver_status: str
     total_contact_hours: float
@@ -419,6 +428,7 @@ def solve_schedule(
     program: Optional[str] = None,
     busy_faculty: Optional[dict[str, set[tuple[int, int]]]] = None,
     lecture_hall: Optional[str] = None,
+    session: Optional[str] = None,
 ) -> TimetableSchedule:
     """Schedule one teaching week for one class with CP-SAT, honouring integration links.
 
@@ -595,7 +605,7 @@ def solve_schedule(
         academic_year=academic_year,
         week_number=clamped_week,
         total_weeks=total_weeks,
-        session="2026-2027",
+        session=clean_session(session),
         cells=scheduled_cells,
         solver_status=status_name,
         total_contact_hours=0.0,
@@ -662,6 +672,7 @@ def list_cohorts(topics: list[ParsedTopic]) -> list[str]:
 class CohortModule(BaseModel):
     module_title: Optional[str] = None
     module_code: Optional[str] = None
+    session: Optional[str] = None
 
 
 def solve_all_cohorts(
@@ -673,6 +684,7 @@ def solve_all_cohorts(
     cohorts: Optional[list[str]] = None,
     time_limit_seconds: float = 8.0,
     cohort_modules: Optional[dict[str, CohortModule]] = None,
+    session: Optional[str] = None,
 ) -> MultiCohortSchedule:
     """Solve the same week for every class, booking shared teachers only once per slot.
 
@@ -705,6 +717,7 @@ def solve_all_cohorts(
             cohort=key,
             busy_faculty=busy,
             lecture_hall=f"Lecture Hall {(idx % LECTURE_HALL_COUNT) + 1}",
+            session=mod.session or session,
         )
         slot_index = {start: k for k, (start, _end) in SLOT_TIMES.items()}
         for c in sched.cells:
@@ -736,6 +749,7 @@ def build_original_schedule(
     academic_year: int = 2,
     week_number: int = 1,
     cohort: Optional[str] = None,
+    session: Optional[str] = None,
 ) -> TimetableSchedule:
     """Reconstruct the original uploaded ('Old') timetable for the given week without AI reordering.
 
@@ -902,7 +916,7 @@ def build_original_schedule(
         academic_year=academic_year,
         week_number=clamped_week,
         total_weeks=total_weeks,
-        session="2026-2027",
+        session=clean_session(session),
         cells=scheduled_cells,
         solver_status="UPLOADED_ORIGINAL",
         total_contact_hours=0.0,
