@@ -59,6 +59,8 @@ DISCIPLINE_ALIASES: dict[str, str] = {
     "NEURO ANAT": "Neuroanatomy",
     "NEUROANATOMY": "Neuroanatomy",
     "NEURO": "Neuroanatomy",
+    "NEUROANAT": "Neuroanatomy",
+    "NEURO ANATOMY": "Neuroanatomy",
     "HISTO": "Histology",
     "HISTOLOGY": "Histology",
     "EMBRYO": "Embryology",
@@ -82,6 +84,20 @@ DISCIPLINE_ALIASES: dict[str, str] = {
     "PATHOLOGY": "Pathology",
     "PHARMACOLOGY": "Pharmacology",
     "COMMUNITY MEDICINE": "Community Medicine",
+    "COM": "Community Medicine",
+    "COMM MED": "Community Medicine",
+    "PATHO": "Pathology",
+    "PHARMACO": "Pharmacology",
+    "BEHAVIOURAL SCIENCES": "Behavioural Sciences",
+    "BEHAVIORAL SCIENCES": "Behavioural Sciences",
+    "BEHAVIOURAL SCIENCE": "Behavioural Sciences",
+    "BEH SCIENCES": "Behavioural Sciences",
+    "RIPPLE": "Research (RIPPLE)",
+    "RESEARCH": "Research (RIPPLE)",
+    "ISL": "Islamiat & Pak Studies",
+    "ISLAMIAT": "Islamiat & Pak Studies",
+    "P.STD": "Islamiat & Pak Studies",
+    "PAK STUDIES": "Islamiat & Pak Studies",
     "ORAL & MAXILLOFACIAL SURGERY": "Oral & Maxillofacial Surgery",
     "SKILL LAB": "Skill Lab",
     "OPHTHAL": "Ophthalmology",
@@ -124,6 +140,10 @@ CLINICAL_DISCIPLINES = {
     "Obstetrics & Gynaecology", "Forensic Medicine", "Oral Pathology", "Oral Medicine",
     "Periodontology", "Prosthodontics", "Operative Dentistry", "Orthodontics",
 }
+
+# Subjects that are taught but never integrated with organ-system topics.
+NON_INTEGRATED_DISCIPLINES = {"Research (RIPPLE)", "Islamiat & Pak Studies", "Institutional", "General"}
+NON_INTEGRATED_SESSION_TYPES = {"RIPPLE", "ISL", "MENTOR_MENTEE", "PAL", "SDL"}
 
 DEFAULT_DURATION_MINUTES = {
     "LGIS": 60,
@@ -225,6 +245,7 @@ DISCIPLINE_SEQUENCE_RANK: dict[str, int] = {
     "Dental Materials": 4,
     "Oral Pathology": 5,
     "Obstetrics & Gynaecology": 11,
+    "Behavioural Sciences": 4,
 }
 DEFAULT_SEQUENCE_RANK = 7
 

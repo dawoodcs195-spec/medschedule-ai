@@ -5,6 +5,7 @@ import {
   IntegrationClusterResult,
   LegendEntry,
   MultiCohortSchedule,
+  ParsedSession,
   ParsedTopic,
   ParseResponse,
   ProposedLink,
@@ -146,6 +147,8 @@ export async function generateSchedule(params: {
   week_number: number;
   cohort?: string | null;
   session?: string | null;
+  sessions?: ParsedSession[];
+  max_week_shift?: number | null;
 }): Promise<TimetableSchedule> {
   const res = await fetch(`${API_BASE}/schedule/generate`, {
     method: "POST",
@@ -164,6 +167,7 @@ export async function generateOriginalSchedule(params: {
   week_number: number;
   cohort?: string | null;
   session?: string | null;
+  sessions?: ParsedSession[];
 }): Promise<TimetableSchedule> {
   const res = await fetch(`${API_BASE}/schedule/original`, {
     method: "POST",
@@ -187,6 +191,8 @@ export async function generateAllSchedules(params: {
     { module_title?: string | null; module_code?: string | null; session?: string | null }
   >;
   session?: string | null;
+  sessions?: ParsedSession[];
+  max_week_shift?: number | null;
 }): Promise<MultiCohortSchedule> {
   const res = await fetch(`${API_BASE}/schedule/generate-all`, {
     method: "POST",
@@ -202,6 +208,7 @@ export async function getCurriculumReport(params: {
   topics: ParsedTopic[];
   links: ProposedLink[];
   schedules: TimetableSchedule[];
+  sessions?: ParsedSession[];
 }): Promise<CurriculumReport> {
   const res = await fetch(`${API_BASE}/analytics/report`, {
     method: "POST",
@@ -216,6 +223,7 @@ export async function downloadReportDocx(params: {
   topics: ParsedTopic[];
   links: ProposedLink[];
   schedules: TimetableSchedule[];
+  sessions?: ParsedSession[];
 }): Promise<Blob> {
   const res = await fetch(`${API_BASE}/export/report-docx`, {
     method: "POST",

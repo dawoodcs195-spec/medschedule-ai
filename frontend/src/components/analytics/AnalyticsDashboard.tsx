@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { ParsedTopic, ProposedLink, TimetableSchedule } from "@/types";
+import { ParsedSession, ParsedTopic, ProposedLink, TimetableSchedule } from "@/types";
 import { BarChart3, Clock, UserCheck, BookOpen, CalendarClock, Link2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -12,6 +12,8 @@ interface AnalyticsDashboardProps {
   topics?: ParsedTopic[];
   links?: ProposedLink[];
   allSchedules?: TimetableSchedule[];
+  /** Real timetable sessions (module report counts rotations and their teachers). */
+  sessions?: ParsedSession[];
 }
 
 export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
@@ -19,6 +21,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
   topics = [],
   links = [],
   allSchedules = [],
+  sessions = [],
 }) => {
   const disciplineHours = schedule.analytics.contact_hours_by_discipline || {};
   const facultyHours = schedule.analytics.faculty_hours || {};
@@ -26,6 +29,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
   const disciplineClasses = schedule.analytics.classes_by_discipline || {};
   const facultyClasses = schedule.analytics.classes_by_faculty || {};
   const integration = schedule.analytics.integration;
+  const tmpl = schedule.template ? schedule.integration_metrics : undefined;
 
   const totalHours = schedule.total_contact_hours;
   const totalSlots = Object.values(timeBrackets).reduce((a, b) => a + b, 0);
@@ -73,11 +77,22 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
 
         <Card className="p-4">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted-foreground">Integrated groups</span>
-            {integration ? <Link2 className="size-4 text-purple-500" /> : <BarChart3 className="size-4 text-purple-500" />}
+            <span className="text-xs font-medium text-muted-foreground">
+              {tmpl?.after ? "Linked pairs ≤ 2 days" : "Integrated groups"}
+            </span>
+            {integration || tmpl ? <Link2 className="size-4 text-purple-500" /> : <BarChart3 className="size-4 text-purple-500" />}
           </div>
           <div className="mt-2 flex items-baseline justify-between">
-            {integration ? (
+            {tmpl?.after && tmpl.before ? (
+              <>
+                <span className="font-heading text-2xl font-bold tracking-tight tabular-nums">
+                  {Math.round(tmpl.after.within_2_days_pct)}%
+                </span>
+                <Badge variant="purple" title="Whole module, before integration → after">
+                  was {Math.round(tmpl.before.within_2_days_pct)}%
+                </Badge>
+              </>
+            ) : integration ? (
               <>
                 <span className="font-heading text-2xl font-bold tracking-tight tabular-nums">
                   {integration.linked_groups}
@@ -97,6 +112,45 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
           </div>
         </Card>
       </div>
+
+      {tmpl?.before && tmpl.after && (
+        <Card data-testid="integration-metrics">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex flex-wrap items-center justify-between gap-2">
+              <span>Integration across the module</span>
+              <span className="text-xs font-normal text-muted-foreground tabular-nums">
+                {tmpl.before.linked_pairs} linked pairs · {tmpl.moved_lectures ?? 0} of {tmpl.movable_lectures ?? 0} lectures moved
+                {tmpl.cross_week_moves ? ` · ${tmpl.cross_week_moves} across weeks` : ""}
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {[
+              { label: "Avg days apart", before: tmpl.before.avg_day_distance, after: tmpl.after.avg_day_distance, unit: "", lowerIsBetter: true },
+              { label: "Same week", before: tmpl.before.same_week_pct, after: tmpl.after.same_week_pct, unit: "%" },
+              { label: "Within 2 days", before: tmpl.before.within_2_days_pct, after: tmpl.after.within_2_days_pct, unit: "%" },
+              { label: "Logical order", before: tmpl.before.logical_order_pct, after: tmpl.after.logical_order_pct, unit: "%" },
+            ].map((m) => {
+              const better = m.lowerIsBetter ? m.after < m.before : m.after > m.before;
+              return (
+                <div key={m.label} className="rounded-xl border border-border/70 bg-muted/30 p-3">
+                  <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{m.label}</p>
+                  <p className="mt-1 flex items-baseline gap-2">
+                    <span className="font-heading text-xl font-bold tabular-nums">
+                      {m.after}
+                      {m.unit}
+                    </span>
+                    <span className={`text-xs tabular-nums ${better ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`}>
+                      from {m.before}
+                      {m.unit}
+                    </span>
+                  </p>
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
+      )}
 
       {/* 3-Column Breakdown */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -210,7 +264,12 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
       </div>
 
       {topics.length > 0 && (
-        <ModuleReport topics={topics} links={links} schedules={allSchedules.length ? allSchedules : [schedule]} />
+        <ModuleReport
+          topics={topics}
+          links={links}
+          schedules={allSchedules.length ? allSchedules : [schedule]}
+          sessions={sessions}
+        />
       )}
     </div>
   );

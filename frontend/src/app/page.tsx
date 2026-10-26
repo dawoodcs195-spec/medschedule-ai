@@ -37,6 +37,7 @@ import {
 } from "@/types";
 import { IntegrationReview } from "@/components/integration/IntegrationReview";
 import { TimetableGrid } from "@/components/grid/TimetableGrid";
+import { ChangesPanel } from "@/components/grid/ChangesPanel";
 import { CopilotDrawer } from "@/components/copilot/CopilotDrawer";
 import { AnalyticsDashboard } from "@/components/analytics/AnalyticsDashboard";
 import { Button } from "@/components/ui/button";
@@ -481,6 +482,8 @@ export default function Home() {
         session: sessionOverride || c.session || session,
       });
       const acadYear = parseResponse.meta.academic_year || academicYear;
+      // Real timetables: keep the uploaded structure and only re-sequence 1-hour lectures.
+      const realSessions = parseResponse.sessions?.length ? parseResponse.sessions : undefined;
 
       if (isMultiCohort) {
         const [all, originals] = await Promise.all([
@@ -492,6 +495,7 @@ export default function Home() {
             week_number: weekNum,
             session,
             cohort_modules: Object.fromEntries(cohorts.map((c) => [c.cohort, cohortModule(c)])),
+            sessions: realSessions,
           }),
           Promise.all(
             cohorts.map((c) =>
@@ -501,6 +505,7 @@ export default function Home() {
                 academic_year: c.academic_year,
                 week_number: weekNum,
                 cohort: c.cohort,
+                sessions: realSessions,
               })
             )
           ),
@@ -532,6 +537,7 @@ export default function Home() {
             week_number: weekNum,
             cohort,
             session,
+            sessions: realSessions,
           }),
           generateOriginalSchedule({
             topics: parseResponse.topics,
@@ -541,6 +547,7 @@ export default function Home() {
             week_number: weekNum,
             cohort,
             session,
+            sessions: realSessions,
           }),
         ]);
         setSchedule(sched);
@@ -842,6 +849,11 @@ export default function Home() {
                       redoCount={futureSchedules.length}
                       onChangeWeek={(wk) => handleGenerateSchedule(wk)}
                     />
+                    {schedule.template && (
+                      <div className="mt-4">
+                        <ChangesPanel schedule={schedule} onOpenWeek={(wk) => handleGenerateSchedule(wk)} />
+                      </div>
+                    )}
                   </div>
 
                   {/* Desktop side drawer */}
@@ -900,6 +912,7 @@ export default function Home() {
                   topics={parseResponse?.topics ?? []}
                   links={proposedLinks}
                   allSchedules={allSchedules}
+                  sessions={parseResponse?.sessions ?? []}
                 />
               </div>
             )}

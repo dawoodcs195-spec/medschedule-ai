@@ -57,3 +57,5 @@ jobs:
         run: python tests/test_client_requirements.py
       - name: Upload-form field tests (session, module override, detected class)
         run: python tests/test_upload_fields.py
+      - name: Real timetable tests (client's anonymised module, template scheduler, export)
+        run: python tests/test_real_timetable.py

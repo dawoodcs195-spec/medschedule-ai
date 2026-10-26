@@ -68,6 +68,19 @@ _SYNONYMS: dict[str, str] = {
     "immunity": "immune", "immunological": "immune",
     "lymphatic": "lymph",
     "insulinoma": "insulin",
+    # Nervous system / head & neck wording seen in real timetables
+    "cerebellar": "cerebellum", "cortical": "cortex", "sensory": "sensation", "somatosensory": "sensation",
+    "track": "tract", "pathway": "tract", "medullary": "medulla", "pontine": "pons",
+    "thalamic": "thalamus", "hypothalamic": "hypothalamus", "meningeal": "meninges",
+    "mesencephalon": "midbrain", "epileptic": "epilepsy", "seizures": "seizure",
+    "paraplegic": "paraplegia", "neuroglial": "neuroglia", "glial": "neuroglia", "glia": "neuroglia",
+    "neurone": "neuron", "nociceptive": "nociception", "analgesic": "analgesia",
+    "electroencephalography": "eeg", "electroencephalogram": "eeg",
+    "vertebrae": "vertebra", "cranium": "skull", "calvaria": "skull", "foramina": "foramen",
+    "foremen": "foramen", "temporomandibular": "tmj", "masticatory": "mastication",
+    "developmental": "childdev", "childhood": "childdev", "milestone": "childdev",
+    "neoplasm": "tumor", "neoplastic": "tumor", "tumour": "tumor",
+    "mri": "imaging", "ct": "imaging", "scan": "imaging", "radiograph": "imaging", "xray": "imaging",
 }
 
 # Words that describe the *kind* of teaching rather than its content.
@@ -183,26 +196,73 @@ ONTOLOGY: dict[str, tuple[str, tuple[str, ...]]] = {
     "bioenergetics": ("metabolism", ("bioenergetics", "oxidative phosphorylation", "atp",
                                      "electron transport", "mitochondria", "biological oxidation")),
     "nutrition": ("metabolism", ("vitamin", "nutrition", "malnutrition", "obesity", "diet")),
-    # Nervous system
-    "peripheral_nerve": ("nervous", ("nerve", "nerve conduction", "action potential", "neuropathy",
-                                     "myelin", "axon", "peripheral nerve", "neuromuscular", "plexus",
-                                     "resting membrane potential", "nerve injury")),
+    # Nervous system — fine-grained so "brain" alone never links unrelated lectures
+    "cns": ("nervous", ("brain", "nervous", "neurology", "neurological", "cns")),
+    "neuron": ("nervous", ("neuron", "neuroglia", "synapse", "neurotransmitter", "acetylcholine", "dopamine",
+                            "axon", "myelin", "nerve fiber", "nerve fibre", "nerve conduction", "action potential",
+                            "resting membrane potential", "neuromuscular junction", "myasthenia")),
+    "peripheral_nerve": ("nervous", ("nerve", "neuropathy", "peripheral nerve", "plexus", "nerve injury",
+                                     "nerve conduction")),
     "brachial_plexus": ("nervous", ("brachial plexus", "erb", "klumpke", "median nerve",
                                     "ulnar nerve", "radial nerve", "axillary nerve",
                                     "musculocutaneous")),
-    "spinal_cord": ("nervous", ("spine cord", "spine", "paraplegia", "ascending tract",
-                                "descending tract", "pyramidal tract", "reflex", "syringomyelia", "spine shock",
-                                "cauda equina", "vertebra")),
-    "brain": ("nervous", ("brain", "cerebrum", "cortex", "stroke", "hemisphere", "internal capsule",
-                          "basal ganglia", "thalamus", "brainstem", "epilepsy", "seizure",
-                          "meningitis", "meninges", "hydrocephalus", "csf")),
-    "cerebellum": ("nervous", ("cerebellum", "ataxia", "coordination", "vestibular")),
-    "synapse": ("nervous", ("synapse", "neurotransmitter", "acetylcholine", "dopamine",
-                            "neuron", "neuroglia", "parkinson", "myasthenia")),
+    "spinal_cord": ("nervous", ("spine cord", "cord", "paraplegia", "quadriplegia", "tetraplegia", "spine shock",
+                                "spine trauma", "spine injury", "spine tumor", "syringomyelia", "cauda equina",
+                                "brown sequard", "cord compression", "grey matter cord", "transverse section cord",
+                                "anterior horn")),
+    "ascending_tracts": ("nervous", ("ascending tract", "dorsal column", "spinothalamic", "sensation tract",
+                                     "sensation disorder", "sensation nervous")),
+    "descending_tracts": ("nervous", ("descending tract", "corticospinal", "pyramidal tract", "extrapyramidal",
+                                      "extra pyramidal", "motor tract", "umn", "lmn", "upper motor neuron",
+                                      "lower motor neuron", "umn lmn")),
+    "reflex": ("nervous", ("reflex", "stretch reflex", "golgi tendon", "muscle spindle", "reflex arc",
+                           "superficial reflex", "deep tendon reflex")),
+    "brainstem": ("nervous", ("brainstem", "brain stem", "medulla", "medulla oblongata", "pons", "midbrain",
+                              "mid brain", "reticular formation")),
+    "cranial_nerves": ("nervous", ("cranial nerve", "cranial nerve palsy", "facial nerve", "trigeminal", "vagus",
+                                   "oculomotor", "abducent", "bell palsy", "hypoglossal")),
+    "cerebellum": ("nervous", ("cerebellum", "ataxia", "cerebellum disorder", "cerebellum cortex",
+                               "vestibulocerebellum")),
+    "vestibular": ("nervous", ("vestibular", "vestibular apparatus", "balance", "equilibrium", "vertigo",
+                               "semicircular canal")),
+    "basal_ganglia": ("nervous", ("basal ganglia", "basal nucleus", "basal nuclei", "parkinson", "parkinsonism",
+                                  "huntington", "chorea", "striatum", "substantia nigra")),
+    "diencephalon": ("nervous", ("diencephalon", "thalamus", "hypothalamus", "epithalamus", "subthalamus",
+                                 "temperature", "thermoregulation")),
+    "limbic": ("nervous", ("limbic", "hippocampus", "amygdala", "memory", "emotion", "papez")),
+    "cerebral_cortex": ("nervous", ("cerebrum", "cerebrum cortex", "cortex", "sensation cortex", "motor cortex",
+                                    "functional area", "cortex area", "sulci", "gyri", "lobe", "speech",
+                                    "aphasia", "white matter brain", "internal capsule", "corpus callosum")),
+    "csf": ("nervous", ("csf", "cerebrospinal fluid", "cerebrospinal", "ventricle brain", "hydrocephalus",
+                        "intracranial pressure", "choroid plexus", "lumbar puncture", "arachnoid granulation")),
+    "meninges": ("nervous", ("meningitis", "meninges", "encephalitis", "brain abscess", "dura mater",
+                             "dural fold")),
+    "cerebral_circulation": ("nervous", ("blood supply brain", "circle willis", "cerebrum artery", "stroke",
+                                         "cerebrovascular", "dural venous sinus", "venous sinus",
+                                         "intracranial hemorrhage", "subarachnoid hemorrhage", "fast criteria")),
     "autonomic": ("nervous", ("autonomic", "sympathetic", "parasympathetic")),
-    "cranial_nerves": ("nervous", ("cranial nerve", "facial nerve", "trigeminal",
-                                   "vagus", "bell palsy", "oculomotor")),
-    "pain": ("nervous", ("pain", "analgesia", "nociception", "anesthesia", "local anesthetic")),
+    "pain": ("nervous", ("pain", "analgesia", "nociception", "referred pain", "anesthesia",
+                         "local anesthetic", "headache")),
+    "sleep": ("nervous", ("sleep", "eeg", "circadian", "insomnia", "wakefulness")),
+    "sensation": ("nervous", ("sensation", "perception", "sensation receptor", "receptor", "touch",
+                              "proprioception")),
+    "epilepsy": ("nervous", ("epilepsy", "seizure", "convulsion", "status epilepticus")),
+    "head_injury": ("nervous", ("head trauma", "head injury", "skull fracture", "glasgow coma", "concussion",
+                                "extradural", "subdural", "glasgow coma scale")),
+    "cns_tumor": ("nervous", ("brain tumor", "spine tumor", "glioma", "meningioma", "intracranial tumor",
+                              "cord tumor")),
+    "neurodevelopment": ("nervous", ("childdev", "development of brain", "brain development",
+                                     "neural tube", "development of spinal cord", "development of spine cord")),
+    "motor_system": ("nervous", ("motor", "motor function", "movement", "posture", "muscle tone")),
+    # Head & neck regions
+    "skull": ("head_neck", ("skull", "fossa", "cranial fossa", "foramen", "norma", "base skull",
+                            "view skull", "temporal fossa", "infratemporal fossa", "infra temporal fossa",
+                            "pterygopalatine fossa", "development of skull", "head trauma", "head injury",
+                            "skull fracture")),
+    "imaging": ("imaging", ("imaging", "neuroimaging", "ultrasound", "radiology")),
+    "pharyngeal_apparatus": ("head_neck", ("pharynx arch", "pharynx pouch", "branchial", "thyroglossal",
+                                           "pharynx cleft")),
+    "scalp": ("head_neck", ("scalp",)),
     # Special senses
     "eye": ("eye", ("eye", "orbit", "vision", "visual", "ophthalmology", "conjunctiva",
                     "conjunctivitis", "eyelid", "lacrimal", "refraction", "squint")),
@@ -255,16 +315,20 @@ ONTOLOGY: dict[str, tuple[str, tuple[str, ...]]] = {
                        "incisor", "molar", "premolar", "canine tooth", "tooth development")),
     "periodontium": ("oral", ("periodontium", "gingiva", "cementum", "alveolar bone",
                               "periodontal ligament", "periodontitis", "gingivitis")),
-    "jaw": ("oral", ("mandible", "maxilla", "jaw", "tmj", "temporomandibular", "mastication",
-                     "muscles mastication", "masseter")),
+    "jaw": ("oral", ("mandible", "maxilla", "jaw", "tmj", "mastication",
+                     "muscles mastication", "masseter", "muscle of mastication")),
     "saliva": ("oral", ("saliva", "parotid", "submandibular gland", "sublingual",
                         "xerostomia")),
     "oral_mucosa": ("oral", ("oral mucosa", "oral cavity", "tongue", "palate", "cleft",
                              "oral ulcer", "lip")),
     "dental_materials": ("oral", ("amalgam", "composite resin", "impression material",
                                   "dental cement", "gypsum", "dental alloy", "acrylic")),
-    "face": ("head_neck", ("face", "facial", "scalp", "parotid", "facial nerve")),
-    "neck": ("head_neck", ("neck", "thyroid", "triangle neck", "cervical")),
+    "face": ("head_neck", ("face", "facial", "parotid", "facial nerve", "facial expression",
+                           "development of face")),
+    "neck": ("head_neck", ("neck", "thyroid", "triangle neck", "cervical", "hyoid")),
+    "neck_triangles": ("head_neck", ("triangle neck", "neck triangle", "triangle of neck", "neck mass",
+                                     "lymph node neck", "lymph node level", "posterior triangle", "anterior triangle",
+                                     "cervical lymph")),
 }
 
 _PHRASE_WEIGHT = 1.0
@@ -272,7 +336,9 @@ _TOKEN_WEIGHT = 0.8
 # Broad anatomical words that should only nudge a match, never decide it on their own.
 _WEAK_TOKENS = {
     "nerve", "plexus", "vessel", "artery", "vein", "circulation", "muscle", "bone", "protein",
-    "enzyme", "cortex", "reflex", "spine", "hand", "arm", "leg", "foot", "lip", "face", "neck",
+    "enzyme", "cortex", "spine", "brain", "nervous", "cord", "receptor", "motor", "movement", "lobe",
+    "fossa", "speech", "balance", "touch", "temperature", "posture", "radiology", "neurology", "cns",
+    "neurological", "hyoid", "hand", "arm", "leg", "foot", "lip", "face", "neck",
     "cervical", "tongue", "crown", "iron", "diet", "lymph", "tissue", "contraction", "optic",
     "brachial", "eye", "visual", "vision",
 }
@@ -305,18 +371,55 @@ _MAX_PHRASE = max((len(p) for p in _BY_PHRASE), default=1)
 
 
 def extract_concepts(tokens: Sequence[str]) -> _Concepts:
-    """Map normalised tokens to ontology concepts (phrases first, then single tokens)."""
+    """Map normalised tokens to ontology concepts.
+
+    Phrases are matched first, on the full token list ('development of brain') and on the content
+    tokens ('blood supply [of the] brain'); tokens a phrase used are not scored again on their own,
+    so 'cerebellar cortex' means cerebellum, not cerebral cortex.
+    """
     found = _Concepts()
-    for n in range(_MAX_PHRASE, 1, -1):
-        for i in range(len(tokens) - n + 1):
-            for concept in _BY_PHRASE.get(tuple(tokens[i : i + n]), ()):
-                found.weights[concept] = max(found.weights.get(concept, 0.0), _PHRASE_WEIGHT)
+    content = content_tokens(tokens)
+    consumed: set[str] = set()
+    for seq in (list(tokens), content):
+        for n in range(_MAX_PHRASE, 1, -1):
+            for i in range(len(seq) - n + 1):
+                gram = tuple(seq[i : i + n])
+                for concept in _BY_PHRASE.get(gram, ()):
+                    found.weights[concept] = max(found.weights.get(concept, 0.0), _PHRASE_WEIGHT)
+                    consumed.update(gram)
     for tok in tokens:
+        if tok in consumed and tok not in _BY_TOKEN_STRONG_IN_PHRASE:
+            continue
         weight = _WEAK_WEIGHT if tok in _WEAK_TOKENS else _TOKEN_WEIGHT
         for concept in _BY_TOKEN.get(tok, ()):
             found.weights[concept] = max(found.weights.get(concept, 0.0), weight)
     found.systems = {ONTOLOGY[c][0] for c in found.weights}
     return found
+
+
+# Tokens that still count on their own after being part of a phrase (an organ named in a
+# 'blood supply of the X' phrase is still about X).
+_BY_TOKEN_STRONG_IN_PHRASE = {"cerebellum", "hypothalamus", "thalamus", "limbic", "skull", "mandible", "tmj",
+                              "stroke", "meningitis", "hydrocephalus", "csf", "pain", "sleep", "autonomic",
+                              "medulla", "pons", "midbrain", "neck", "face", "heart", "kidney", "lung", "liver",
+                              "eye", "ear", "tooth", "diabetes", "thyroid", "paraplegia", "sensation", "memory"}
+
+# Concepts that are different but closely related: partial credit when two topics carry them.
+RELATED_CONCEPTS: dict[frozenset[str], float] = {
+    frozenset(p): w for p, w in [
+        (("skull", "head_injury"), 0.8), (("skull", "imaging"), 0.6), (("head_injury", "imaging"), 0.6),
+        (("csf", "meninges"), 0.4), (("brainstem", "cranial_nerves"), 0.6), (("cerebellum", "vestibular"), 0.8),
+        (("basal_ganglia", "descending_tracts"), 0.6), (("diencephalon", "limbic"), 0.7),
+        (("cerebral_cortex", "sensation"), 0.6), (("ascending_tracts", "sensation"), 0.7),
+        (("spinal_cord", "ascending_tracts"), 0.6), (("spinal_cord", "descending_tracts"), 0.6),
+        (("spinal_cord", "reflex"), 0.6), (("cerebral_cortex", "descending_tracts"), 0.4),
+        (("pain", "sleep"), 0.3), (("cerebral_circulation", "csf"), 0.3), (("cns_tumor", "imaging"), 0.4),
+        (("brainstem", "motor_system"), 0.4), (("neuron", "peripheral_nerve"), 0.6),
+        (("neurodevelopment", "spinal_cord"), 0.5), (("jaw", "face"), 0.5),
+        (("neck_triangles", "pharyngeal_apparatus"), 0.5), (("neck_triangles", "neck"), 0.8),
+        (("scalp", "face"), 0.6),
+    ]
+}
 
 
 # ---------------------------------------------------------------------------
@@ -355,15 +458,32 @@ def _sparse_cos(a: dict[str, float], b: dict[str, float]) -> float:
 
 
 def _overlap(a: dict[str, float], b: dict[str, float]) -> tuple[float, list[str]]:
-    """Weighted Dice overlap between two concept-weight maps (1.0 = same concepts)."""
+    """Weighted Dice overlap between two concept-weight maps (1.0 = same concepts).
+
+    Concepts listed in RELATED_CONCEPTS (skull ~ head injury, cerebellum ~ vestibular...) count
+    partially when they are not shared outright.
+    """
     if not a or not b:
         return 0.0, []
     shared = sorted(set(a) & set(b))
-    if not shared:
-        return 0.0, []
     num = 2 * sum(min(a[c], b[c]) for c in shared)
+    strength = max((min(a[c], b[c]) for c in shared), default=0.0)
+    related: list[str] = []
+    for ca in set(a) - set(shared):
+        best, partner = 0.0, None
+        for cb in set(b) - set(shared):
+            r = RELATED_CONCEPTS.get(frozenset((ca, cb)), 0.0)
+            if r * min(a[ca], b[cb]) > best:
+                best, partner = r * min(a[ca], b[cb]), cb
+        if partner is not None:
+            num += 2 * best
+            strength = max(strength, best)
+            related.append(f"{ca}~{partner}")
+    if num == 0:
+        return 0.0, []
     den = sum(a.values()) + sum(b.values())
-    return min(1.0, num / den), shared
+    # Two topics that only share broad words ('nervous', 'brain', 'neck') are not the same topic.
+    return min(1.0, num / den) * min(1.0, strength / _TOKEN_WEIGHT), shared + related
 
 
 # ---------------------------------------------------------------------------

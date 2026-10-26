@@ -77,12 +77,49 @@ class ParsedTopic(ExtractedTopic):
     academic_year: Optional[int] = Field(default=None, description="Year of study (1-5)")
     cohort: Optional[str] = Field(default=None, description="Class key, e.g. 'MBBS-2'")
     occurrences: int = Field(default=1, ge=1, description="Times the topic appears in the uploaded timetable")
+    faculty_names: list[str] = Field(default_factory=list, description="Every teacher of this topic (co-teachers included)")
+    weeks: list[int] = Field(default_factory=list, description="Weeks of the uploaded timetable that teach this topic")
 
 
 class LegendEntry(BaseModel):
     code: str = Field(description="e.g. 'HISTO P1', 'PHYSIO SGD', 'SKILL LAB'")
     title: str
     cohort: Optional[str] = None
+    week: Optional[int] = Field(default=None, description="Week whose table the legend line sits under")
+
+
+class SessionBatch(BaseModel):
+    """One batch (or group of batches) inside a practical / SGD rotation block."""
+
+    batches: list[str] = Field(description="e.g. ['A'] or ['A', 'B']")
+    station: str = Field(description="Station as written, e.g. 'Histo-P1' or 'SDL'")
+    discipline: str = Field(description="Canonical subject of the station, e.g. 'Histology', 'SDL'")
+    code: Optional[str] = Field(default=None, description="Practical number, e.g. 'P1'")
+    topic_title: Optional[str] = Field(default=None, description="Resolved from that week's legend")
+    faculty_names: list[str] = []
+
+
+class ParsedSession(BaseModel):
+    """One session exactly where the uploaded timetable puts it (week, day, time)."""
+
+    id: Optional[UUID] = None
+    cohort: Optional[str] = None
+    week: int
+    day_of_week: int = Field(description="1 = Monday ... 6 = Saturday")
+    date: Optional[str] = Field(default=None, description="ISO date read from the timetable, e.g. '2026-10-26'")
+    time_start: str
+    time_end: str
+    kind: str = Field(description="TEACHING (whole class), ROTATION (batch practical/SGD block) or EVENT (non-teaching)")
+    session_type: SessionType
+    raw_session: str = Field(default="", description="Session label as written, e.g. 'LGIS', 'LGD', 'PRACTICALS'")
+    discipline: str
+    raw_discipline: str = ""
+    category: str = "INSTITUTIONAL"
+    topic_title: str
+    faculty_names: list[str] = []
+    batches: list[SessionBatch] = []
+    topic_id: Optional[UUID] = None
+    movable: bool = Field(default=False, description="May the integrator re-sequence this session?")
 
 
 class CohortSummary(BaseModel):
@@ -112,6 +149,12 @@ class ParseResponse(BaseModel):
     module_id: Optional[UUID] = None
     persisted: bool = False
     cohorts: list[CohortSummary] = []
+    sessions: list[ParsedSession] = Field(
+        default_factory=list, description="Every session in its original slot (timetable uploads only)"
+    )
+    teacher_aliases: dict[str, str] = Field(
+        default_factory=dict, description="Spelling variants merged into one teacher, variant -> canonical"
+    )
 
 
 class IngestTextRequest(BaseModel):

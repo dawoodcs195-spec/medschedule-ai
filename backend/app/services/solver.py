@@ -115,6 +115,12 @@ class ScheduledCell(BaseModel):
     integration_tags: list[str] = Field(
         default_factory=list, description="Human-readable horizontal (↔) and vertical (↕) links"
     )
+    date: Optional[str] = Field(default=None, description="ISO date of the session (real timetables)")
+    kind: Optional[str] = Field(default=None, description="TEACHING, ROTATION or EVENT (real timetables)")
+    session_id: Optional[UUID] = Field(default=None, description="Uploaded session this cell comes from")
+    moved_from: Optional[str] = Field(
+        default=None, description="Where the integrator moved this lecture from, e.g. 'Week 3 · Wed 29/10 09:00'"
+    )
 
 
 DEFAULT_SESSION = "2026-2027"
@@ -140,6 +146,13 @@ class TimetableSchedule(BaseModel):
     program: str = "MBBS"
     cohort: Optional[str] = None
     cohort_label: Optional[str] = None
+    # Real-timetable (template) runs only
+    template: bool = Field(default=False, description="Built from the uploaded timetable's exact sessions")
+    week_dates: dict[int, str] = Field(default_factory=dict, description="day_of_week -> ISO date for this week")
+    moves: list[dict[str, Any]] = Field(default_factory=list, description="Every lecture the integrator moved (whole module)")
+    integration_metrics: dict[str, Any] = Field(
+        default_factory=dict, description="Linked-pair distances before and after integration (whole module)"
+    )
 
 
 def _resolve_practical_station_label(venue: str, week_number: int, topics: list[ParsedTopic]) -> str:
@@ -231,9 +244,13 @@ def recompute_schedule_analytics(schedule: TimetableSchedule) -> TimetableSchedu
         contact_hours_by_discipline[c.discipline] = round(contact_hours_by_discipline.get(c.discipline, 0.0) + dur, 1)
         classes_by_discipline[c.discipline] += 1
         classes_by_session_type[c.session_type] += 1
-        if c.faculty_name:
-            faculty_hours[c.faculty_name] = round(faculty_hours.get(c.faculty_name, 0.0) + dur, 1)
-            classes_by_faculty[c.faculty_name] += 1
+        # Co-teachers ('Dr. A / Dr. B') and rotation station teachers each carry the session.
+        names = [n.strip() for n in (c.faculty_name or "").split(" / ") if n.strip()]
+        for b in c.batch_assignments:
+            names.extend(n.strip() for n in (b.faculty or "").split(" / ") if n.strip() and n.strip() not in names)
+        for name in names:
+            faculty_hours[name] = round(faculty_hours.get(name, 0.0) + dur, 1)
+            classes_by_faculty[name] += 1
         if not c.batch_assignments:
             topic_counts[(c.discipline, c.topic_title)] += 1
         bracket = f"{c.time_start} - {c.time_end}"
