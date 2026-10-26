@@ -25,6 +25,7 @@ import {
   validateSlotMove,
 } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
+import { DEFAULT_SESSION, formatModuleLabel, parseModuleLabel } from "@/lib/module-label";
 import { applyStoredTheme, useTheme } from "@/lib/theme";
 import {
   ConflictDetail,
@@ -81,7 +82,10 @@ export default function Home() {
   const [program, setProgram] = useState("MBBS");
   const [academicYear, setAcademicYear] = useState(2);
   const [moduleLabel, setModuleLabel] = useState("");
-  const [sessionLabel, setSessionLabel] = useState("2026-2027");
+  const [sessionLabel, setSessionLabel] = useState(DEFAULT_SESSION);
+  // A field the user typed into wins over what the file says; an untouched one is auto-filled.
+  const [moduleTouched, setModuleTouched] = useState(false);
+  const [sessionTouched, setSessionTouched] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [parseResponse, setParseResponse] = useState<ParseResponse | null>(null);
 
@@ -326,6 +330,17 @@ export default function Home() {
             ? await ingestFile(selectedFiles[0], program, academicYear, true, true)
             : await ingestText(rawText, program, academicYear, true, true);
       setParseResponse(res);
+      const parsedCohorts = res.cohorts ?? [];
+      if (!moduleTouched) {
+        // One class: show its detected module. Several: each class keeps its own, so leave it blank.
+        setModuleLabel(
+          parsedCohorts.length > 1 ? "" : formatModuleLabel(res.meta.module_title, res.meta.module_code)
+        );
+      }
+      if (!sessionTouched) {
+        const detected = res.meta.session || parsedCohorts.find((c) => c.session)?.session;
+        setSessionLabel(detected || DEFAULT_SESSION);
+      }
       setActiveCohort(res.cohorts?.[0]?.cohort ?? null);
       setSchedulesByCohort({});
       setOriginalsByCohort({});
@@ -409,6 +424,36 @@ export default function Home() {
   const cohorts = useMemo(() => parseResponse?.cohorts ?? [], [parseResponse]);
   const isMultiCohort = cohorts.length > 1;
 
+  // Small "detected from file" hints under the upload form, after a parse.
+  const detectedClassHint = useMemo(() => {
+    const found = cohorts.filter((c) => c.class_detected);
+    if (found.length === 0) return null;
+    // "2nd Year MBBS" -> "MBBS 2nd Year"
+    const names = found.map((c) => `${c.program} ${c.label.replace(c.program, "").trim()}`);
+    return `Detected from ${found.length > 1 ? "files" : "file"}: ${names.join(", ")}`;
+  }, [cohorts]);
+  const moduleHint = !parseResponse
+    ? null
+    : moduleTouched && moduleLabel.trim()
+      ? isMultiCohort
+        ? "Your value overrides every class"
+        : "Your value is used"
+      : isMultiCohort
+        ? "Each class uses the module in its file"
+        : parseResponse.meta.module_title
+          ? "Detected from file"
+          : null;
+  const sessionHint = parseResponse && !sessionTouched && parseResponse.meta.session ? "Detected from file" : null;
+
+  const handleModuleLabelChange = (v: string) => {
+    setModuleLabel(v);
+    setModuleTouched(v.trim().length > 0);
+  };
+  const handleSessionLabelChange = (v: string) => {
+    setSessionLabel(v);
+    setSessionTouched(v.trim().length > 0);
+  };
+
   // Every class's current timetable, with the live (possibly edited) one for the active class
   const allSchedules = useMemo(() => {
     if (!schedule) return [];
@@ -424,9 +469,17 @@ export default function Home() {
     setIsLoading(true);
     try {
       const approved = proposedLinks.filter((l) => l.is_approved);
-      const moduleCode = parseResponse.meta.module_code || "MODULE-01";
-      const moduleTitle =
-        parseResponse.meta.module_title || moduleLabel.trim() || "INTEGRATED MODULE";
+      // A module the user typed overrides every class; otherwise each file's detected module is used.
+      const moduleOverride = moduleTouched && moduleLabel.trim() ? parseModuleLabel(moduleLabel) : null;
+      const moduleCode = moduleOverride?.code || parseResponse.meta.module_code || "MODULE-01";
+      const moduleTitle = moduleOverride?.title || parseResponse.meta.module_title || "INTEGRATED MODULE";
+      const sessionOverride = sessionTouched && sessionLabel.trim() ? sessionLabel.trim() : null;
+      const session = sessionOverride || sessionLabel.trim() || parseResponse.meta.session || DEFAULT_SESSION;
+      const cohortModule = (c: (typeof cohorts)[number]) => ({
+        module_title: moduleOverride ? moduleOverride.title : c.module_title || moduleTitle,
+        module_code: moduleOverride?.code || c.module_code || moduleCode,
+        session: sessionOverride || c.session || session,
+      });
       const acadYear = parseResponse.meta.academic_year || academicYear;
 
       if (isMultiCohort) {
@@ -437,16 +490,14 @@ export default function Home() {
             module_code: moduleCode,
             module_title: moduleTitle,
             week_number: weekNum,
-            cohort_modules: Object.fromEntries(
-              cohorts.map((c) => [c.cohort, { module_title: c.module_title, module_code: c.module_code }])
-            ),
+            session,
+            cohort_modules: Object.fromEntries(cohorts.map((c) => [c.cohort, cohortModule(c)])),
           }),
           Promise.all(
             cohorts.map((c) =>
               generateOriginalSchedule({
                 topics: parseResponse.topics,
-                module_code: c.module_code || moduleCode,
-                module_title: c.module_title || moduleTitle,
+                ...cohortModule(c),
                 academic_year: c.academic_year,
                 week_number: weekNum,
                 cohort: c.cohort,
@@ -480,6 +531,7 @@ export default function Home() {
             academic_year: acadYear,
             week_number: weekNum,
             cohort,
+            session,
           }),
           generateOriginalSchedule({
             topics: parseResponse.topics,
@@ -488,6 +540,7 @@ export default function Home() {
             academic_year: acadYear,
             week_number: weekNum,
             cohort,
+            session,
           }),
         ]);
         setSchedule(sched);
@@ -710,9 +763,12 @@ export default function Home() {
                 academicYear={academicYear}
                 setAcademicYear={setAcademicYear}
                 moduleLabel={moduleLabel}
-                setModuleLabel={setModuleLabel}
+                setModuleLabel={handleModuleLabelChange}
                 sessionLabel={sessionLabel}
-                setSessionLabel={setSessionLabel}
+                setSessionLabel={handleSessionLabelChange}
+                detectedClassHint={detectedClassHint}
+                moduleHint={moduleHint}
+                sessionHint={sessionHint}
                 rawText={rawText}
                 setRawText={setRawText}
                 selectedFiles={selectedFiles}

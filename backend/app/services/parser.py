@@ -292,6 +292,8 @@ HEADER_MODULE_RE = re.compile(
     r"^(?P<title>.+?)\s*\((?P<code>MODULE-\d+)\)(?:\s*\(WEEK-\d+\))?(?:\s*\(SESSION\s+(?P<session>[\d-]+)\))?",
     re.I,
 )
+# "SESSION 2026-2027", "(SESSION: 2026–27)", "Session 2026/2027" anywhere in a header line.
+SESSION_RE = re.compile(r"\bSESSION\s*[:\-\u2013]?\s*(?P<session>\d{4}\s*[-\u2013/]\s*\d{2,4})", re.I)
 # Legend codes: "HISTO P1= Neurons", "BIO CHEM SGD=Types of ...", "SKILL LAB = CNS Examination"
 LEGEND_RE = re.compile(
     r"(?P<disc>HISTO|PHYSIO|BIO\s?CHEM|ANAT|SKILL\s+LAB)"
@@ -348,7 +350,22 @@ def parse_header(paragraphs: list[str]) -> ExtractedModuleMeta:
             meta.module_title = m.group("title").strip()
             meta.module_code = m.group("code").upper()
             meta.session = m.group("session")
+        if meta.session is None and (s := SESSION_RE.search(p)):
+            meta.session = normalize_session(s.group("session"))
+    if meta.session:
+        meta.session = normalize_session(meta.session)
     return meta
+
+
+def normalize_session(value: str | None) -> str | None:
+    """'2026 – 2027' / '2026/2027' -> '2026-2027'; anything else is kept as typed (trimmed)."""
+    if value is None:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    m = re.fullmatch(r"(\d{4})\s*[-\u2013/]\s*(\d{2,4})", text)
+    return f"{m.group(1)}-{m.group(2)}" if m else text
 
 
 def parse_legend(paragraphs: list[str]) -> list[LegendEntry]:
@@ -668,6 +685,7 @@ def tag_cohort(result: ParseResponse, program: str, academic_year: int, source: 
         academic_year=year,
         module_title=result.meta.module_title,
         module_code=result.meta.module_code,
+        session=result.meta.session,
         source=source,
         topic_count=len(result.topics),
     )
@@ -690,12 +708,14 @@ def parse_sections(
     for doc, source in sections:
         name_prog, name_year = cohort_from_filename(source)
         res = parse_document(doc, use_llm=use_llm, overrides=overrides)
+        detected = bool(res.meta.program and res.meta.academic_year) or bool(name_prog and name_year)
         summary = tag_cohort(
             res,
             name_prog if res.meta.program is None and name_prog else default_program,
             name_year if res.meta.academic_year is None and name_year else default_year,
             source,
         )
+        summary.class_detected = detected
         results.append((res, summary))
 
     if len(results) == 1:

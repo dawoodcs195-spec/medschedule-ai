@@ -57,6 +57,10 @@ export interface CohortSummary {
   academic_year: number;
   module_title?: string | null;
   module_code?: string | null;
+  /** Academic session read from the header, e.g. "2026-2027". */
+  session?: string | null;
+  /** True when program/year came from the file (header or file name) rather than the form. */
+  class_detected?: boolean;
   source?: string | null;
   topic_count: number;
 }

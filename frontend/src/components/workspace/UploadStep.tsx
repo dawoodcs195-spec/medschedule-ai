@@ -2,7 +2,7 @@
 
 import React from "react";
 import { motion } from "motion/react";
-import { Building2, CheckCircle2, Clock, Cpu, Plus, Trash2, Upload, Users, Wand2 } from "lucide-react";
+import { Building2, CheckCircle2, Clock, Cpu, Plus, ScanSearch, Trash2, Upload, Users, Wand2 } from "lucide-react";
 import type { Department } from "@/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { GenerateButton } from "@/components/ui/generate-button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { looksLikeSession } from "@/lib/module-label";
 
 interface UploadStepProps {
   program: string;
@@ -23,6 +24,10 @@ interface UploadStepProps {
   setModuleLabel: (v: string) => void;
   sessionLabel: string;
   setSessionLabel: (v: string) => void;
+  /** e.g. "Detected from file: MBBS 2nd Year" after a parse, when the file named its class. */
+  detectedClassHint?: string | null;
+  moduleHint?: string | null;
+  sessionHint?: string | null;
   rawText: string;
   setRawText: (v: string) => void;
   selectedFiles: File[];
@@ -60,6 +65,9 @@ export function UploadStep(props: UploadStepProps) {
     setModuleLabel,
     sessionLabel,
     setSessionLabel,
+    detectedClassHint,
+    moduleHint,
+    sessionHint,
     rawText,
     setRawText,
     selectedFiles,
@@ -82,6 +90,7 @@ export function UploadStep(props: UploadStepProps) {
   const selectedFile = selectedFiles[0] ?? null;
   const fileCount = selectedFiles.length;
   const totalKb = selectedFiles.reduce((sum, f) => sum + f.size, 0) / 1024;
+  const sessionLooksOdd = sessionLabel.trim().length > 0 && !looksLikeSession(sessionLabel);
 
   return (
     <div className="mx-auto w-full min-w-0 max-w-5xl space-y-5">
@@ -158,8 +167,8 @@ export function UploadStep(props: UploadStepProps) {
             {/* Module metadata */}
             <div className="grid min-w-0 grid-cols-2 gap-3 lg:grid-cols-4">
               <div className="min-w-0 space-y-1.5">
-                <Label htmlFor="ms-program" title="Used when a file has no 'TIMETABLE FOR … YEAR' header">
-                  Default program
+                <Label htmlFor="ms-program" title="Used only when a file has no 'TIMETABLE FOR … YEAR' header">
+                  Program (if not in file)
                 </Label>
                 <Select id="ms-program" suppressHydrationWarning value={program} onChange={(e) => setProgram(e.target.value)}>
                   <option value="MBBS">MBBS</option>
@@ -167,8 +176,8 @@ export function UploadStep(props: UploadStepProps) {
                 </Select>
               </div>
               <div className="min-w-0 space-y-1.5">
-                <Label htmlFor="ms-year" title="Used when a file has no 'TIMETABLE FOR … YEAR' header">
-                  Default year
+                <Label htmlFor="ms-year" title="Used only when a file has no 'TIMETABLE FOR … YEAR' header">
+                  Year (if not in file)
                 </Label>
                 <Select
                   id="ms-year"
@@ -184,26 +193,58 @@ export function UploadStep(props: UploadStepProps) {
                 </Select>
               </div>
               <div className="min-w-0 space-y-1.5">
-                <Label htmlFor="ms-module">Block / Module</Label>
+                <Label htmlFor="ms-module" title="Read from the file; type a value to override it">
+                  Block / Module
+                </Label>
                 <Input
                   id="ms-module"
                   suppressHydrationWarning
                   value={moduleLabel}
                   onChange={(e) => setModuleLabel(e.target.value)}
-                  placeholder="e.g. Foundation Block-I"
+                  placeholder="From file, e.g. Neurosciences Block-IV (Module-07)"
+                  aria-describedby={moduleHint ? "ms-module-hint" : undefined}
                 />
+                {moduleHint && (
+                  <p id="ms-module-hint" className="truncate text-[11px] text-muted-foreground">
+                    {moduleHint}
+                  </p>
+                )}
               </div>
               <div className="min-w-0 space-y-1.5">
-                <Label htmlFor="ms-session">Session</Label>
+                <Label htmlFor="ms-session" title="Printed in the timetable header, e.g. (SESSION 2026-2027)">
+                  Session
+                </Label>
                 <Input
                   id="ms-session"
                   suppressHydrationWarning
                   value={sessionLabel}
                   onChange={(e) => setSessionLabel(e.target.value)}
                   placeholder="2026-2027"
+                  aria-describedby={sessionHint || sessionLooksOdd ? "ms-session-hint" : undefined}
                 />
+                {sessionLooksOdd ? (
+                  <p id="ms-session-hint" className="truncate text-[11px] text-amber-700 dark:text-amber-300">
+                    Usually YYYY-YYYY, e.g. 2026-2027
+                  </p>
+                ) : (
+                  sessionHint && (
+                    <p id="ms-session-hint" className="truncate text-[11px] text-muted-foreground">
+                      {sessionHint}
+                    </p>
+                  )
+                )}
               </div>
             </div>
+
+            {detectedClassHint && (
+              <p className="-mt-2 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                <ScanSearch className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />
+                <span className="truncate">
+                  <span className="font-semibold text-foreground">{detectedClassHint}</span>
+                  {" "}· Program/Year above are only used for files without a class header
+                </span>
+              </p>
+            )}
 
             {/* Dropzone + editor */}
             <div data-tour="upload" className="grid min-w-0 grid-cols-1 items-stretch gap-4 md:grid-cols-5">
