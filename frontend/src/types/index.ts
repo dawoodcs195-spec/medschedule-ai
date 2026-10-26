@@ -73,6 +73,38 @@ export interface ExtractedModuleMeta {
   session?: string | null;
 }
 
+/** One batch (or group of batches) inside a practical / SGD rotation block. */
+export interface SessionBatch {
+  batches: string[];
+  station: string;
+  discipline: string;
+  code?: string | null;
+  topic_title?: string | null;
+  faculty_names: string[];
+}
+
+/** One session exactly where the uploaded timetable puts it (real timetable uploads). */
+export interface ParsedSession {
+  id?: string | null;
+  cohort?: string | null;
+  week: number;
+  day_of_week: number;
+  date?: string | null;
+  time_start: string;
+  time_end: string;
+  kind: "TEACHING" | "ROTATION" | "EVENT" | string;
+  session_type: SessionType;
+  raw_session?: string;
+  discipline: string;
+  raw_discipline?: string;
+  category?: DisciplineCategory;
+  topic_title: string;
+  faculty_names: string[];
+  batches: SessionBatch[];
+  topic_id?: string | null;
+  movable: boolean;
+}
+
 export interface ParseResponse {
   meta: ExtractedModuleMeta;
   topics: ParsedTopic[];
@@ -83,6 +115,10 @@ export interface ParseResponse {
   module_id?: string | null;
   persisted: boolean;
   cohorts?: CohortSummary[];
+  /** Every session in its original slot (real timetable uploads only). */
+  sessions?: ParsedSession[];
+  /** Teacher spelling variants merged into one name, variant -> canonical. */
+  teacher_aliases?: Record<string, string>;
 }
 
 export interface ProposedLink {
@@ -139,6 +175,55 @@ export interface ScheduledCell {
   integration_group?: string | null;
   /** "↔ Physiology: Cardiac cycle (Tue 09:00)" or "↕ 4th Year MBBS Medicine: …" */
   integration_tags?: string[];
+  /** ISO date of the session (real timetables). */
+  date?: string | null;
+  /** TEACHING, ROTATION or EVENT (real timetables). */
+  kind?: string | null;
+  session_id?: string | null;
+  /** Where the integrator moved this lecture from, e.g. "Week 3 · Wed 29/10 09:00". */
+  moved_from?: string | null;
+}
+
+/** One lecture the integrator moved (real timetables). */
+export interface LectureMove {
+  session_id?: string | null;
+  topic_title: string;
+  discipline: string;
+  session_type: string;
+  faculty_name?: string | null;
+  from_week: number;
+  from_day: number;
+  from_date?: string | null;
+  from_start: string;
+  from_end: string;
+  from_label: string;
+  to_week: number;
+  to_day: number;
+  to_date?: string | null;
+  to_start: string;
+  to_end: string;
+  to_label: string;
+  week_shift: number;
+  linked_with: string[];
+  reason: string;
+}
+
+export interface LinkDistanceMetrics {
+  linked_pairs: number;
+  avg_day_distance: number;
+  same_week_pct: number;
+  within_2_days_pct: number;
+  same_day_pct: number;
+  logical_order_pct: number;
+}
+
+export interface TemplateIntegrationMetrics {
+  before?: LinkDistanceMetrics;
+  after?: LinkDistanceMetrics;
+  moved_lectures?: number;
+  cross_week_moves?: number;
+  movable_lectures?: number;
+  max_week_shift?: number | null;
 }
 
 export interface TopicCoverageRow {
@@ -178,6 +263,13 @@ export interface TimetableSchedule {
   program?: string;
   cohort?: string | null;
   cohort_label?: string | null;
+  /** Built from the uploaded timetable's exact sessions (structure kept). */
+  template?: boolean;
+  /** day_of_week -> ISO date for this week. */
+  week_dates?: Record<string, string>;
+  /** Every lecture the integrator moved across the whole module. */
+  moves?: LectureMove[];
+  integration_metrics?: TemplateIntegrationMetrics;
 }
 
 export interface MultiCohortSchedule {

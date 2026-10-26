@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { BookOpen, Download, FileBarChart2, Link2, Search, UserCheck } from "lucide-react";
-import type { CurriculumReport, ParsedTopic, ProposedLink, TimetableSchedule } from "@/types";
+import type { CurriculumReport, ParsedSession, ParsedTopic, ProposedLink, TimetableSchedule } from "@/types";
 import { downloadReportDocx, getCurriculumReport } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
 import { Badge } from "@/components/ui/badge";
@@ -16,10 +16,12 @@ interface ModuleReportProps {
   topics: ParsedTopic[];
   links: ProposedLink[];
   schedules: TimetableSchedule[];
+  /** Real timetable sessions: every lecture and rotation station counts (rotation teacher load). */
+  sessions?: ParsedSession[];
 }
 
 /** Whole-upload report (every week, every class): classes per subject, teacher load, coverage. */
-export function ModuleReport({ topics, links, schedules }: ModuleReportProps) {
+export function ModuleReport({ topics, links, schedules, sessions }: ModuleReportProps) {
   const approved = useMemo(() => links.filter((l) => l.is_approved), [links]);
   // Re-fetch only when something that changes the counts changes (edits, approvals, uploads).
   const requestKey = useMemo(
@@ -27,9 +29,10 @@ export function ModuleReport({ topics, links, schedules }: ModuleReportProps) {
       JSON.stringify([
         topics.length,
         approved.length,
+        sessions?.length ?? 0,
         schedules.map((s) => s.cells.map((c) => `${c.topic_id ?? c.topic_title}:${c.faculty_name ?? ""}`).join("|")),
       ]),
-    [topics, approved, schedules]
+    [topics, approved, schedules, sessions]
   );
   const [result, setResult] = useState<{ key: string; report?: CurriculumReport; error?: string } | null>(null);
   const [cohort, setCohort] = useState("ALL");
@@ -38,7 +41,7 @@ export function ModuleReport({ topics, links, schedules }: ModuleReportProps) {
 
   useEffect(() => {
     let cancelled = false;
-    getCurriculumReport({ topics, links: approved, schedules })
+    getCurriculumReport({ topics, links: approved, schedules, sessions })
       .then((report) => !cancelled && setResult({ key: requestKey, report }))
       .catch((err: unknown) => !cancelled && setResult({ key: requestKey, error: errorMessage(err) }));
     return () => {
@@ -69,7 +72,7 @@ export function ModuleReport({ topics, links, schedules }: ModuleReportProps) {
   const handleDownload = async () => {
     setIsDownloading(true);
     try {
-      const blob = await downloadReportDocx({ topics, links: approved, schedules });
+      const blob = await downloadReportDocx({ topics, links: approved, schedules, sessions });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
