@@ -136,7 +136,7 @@ def generate_landscape_docx(
     p_hdr2.paragraph_format.space_after = Pt(4)
     week_str = f"WEEK-{schedule.week_number:02d}"
     run2 = p_hdr2.add_run(
-        f"{schedule.module_title.upper()} ({schedule.module_code}) ({week_str}) (SESSION {schedule.session})"
+        f"{schedule.module_title.upper()} ({schedule.module_code}) ({week_str}) (SESSION {(schedule.session or '').strip() or '2026-2027'})"
     )
     run2.font.name = "Arial"
     run2.font.size = Pt(10)

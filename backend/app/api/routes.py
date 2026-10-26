@@ -279,6 +279,7 @@ class GenerateScheduleRequest(BaseModel):
     week_number: int = 1
     time_limit_seconds: float = 10.0
     cohort: Optional[str] = Field(default=None, description="Only schedule this class, e.g. 'MBBS-2'")
+    session: Optional[str] = Field(default=None, description="Academic session for the header, e.g. '2026-2027'")
 
 
 @router.post("/schedule/generate", response_model=solver.TimetableSchedule, tags=["scheduling"])
@@ -293,6 +294,7 @@ def generate_schedule(req: GenerateScheduleRequest):
             week_number=req.week_number,
             time_limit_seconds=req.time_limit_seconds,
             cohort=req.cohort,
+            session=req.session,
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
@@ -309,6 +311,7 @@ class GenerateAllRequest(BaseModel):
         default_factory=dict, description="Per-class module title/code, e.g. {'MBBS-4': {...}}"
     )
     time_limit_seconds: float = Field(default=8.0, description="Solver budget shared by all classes")
+    session: Optional[str] = Field(default=None, description="Academic session for every class without its own")
 
 
 @router.post("/schedule/generate-all", response_model=solver.MultiCohortSchedule, tags=["scheduling"])
@@ -324,6 +327,7 @@ def generate_all_schedules(req: GenerateAllRequest):
             cohorts=req.cohorts,
             time_limit_seconds=req.time_limit_seconds,
             cohort_modules=req.cohort_modules,
+            session=req.session,
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
@@ -338,6 +342,7 @@ def get_original_uploaded_schedule(req: GenerateScheduleRequest):
         academic_year=req.academic_year,
         week_number=req.week_number,
         cohort=req.cohort,
+        session=req.session,
     )
 
 

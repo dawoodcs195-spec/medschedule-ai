@@ -302,6 +302,9 @@ export const TimetableGrid: React.FC<TimetableGridProps> = ({
           <div className="flex items-center justify-between sm:justify-start gap-2 min-w-0">
             <h2 className="text-xs sm:text-sm font-semibold tracking-tight text-foreground truncate min-w-0">
               {schedule.module_title} ({schedule.module_code})
+              {schedule.session && (
+                <span className="font-normal text-muted-foreground"> · Session {schedule.session}</span>
+              )}
             </h2>
             <Badge variant={isUsingOldTable ? "amber" : "sky"} className="shrink-0">
               {isUsingOldTable ? "Uploaded" : "AI Schedule"}

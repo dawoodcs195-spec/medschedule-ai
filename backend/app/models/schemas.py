@@ -131,6 +131,10 @@ class CohortSummary(BaseModel):
     academic_year: int
     module_title: Optional[str] = None
     module_code: Optional[str] = None
+    session: Optional[str] = Field(default=None, description="Academic session from the header, e.g. '2026-2027'")
+    class_detected: bool = Field(
+        default=False, description="True when program/year came from the file (header or file name), not the form"
+    )
     source: Optional[str] = Field(default=None, description="File name or 'pasted text'")
     topic_count: int = 0
 
