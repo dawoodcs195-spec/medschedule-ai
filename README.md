@@ -8,7 +8,7 @@
 
 Turn a medical or dental module syllabus into a conflict-free, horizontally and vertically integrated weekly timetable, then refine it on a drag-and-drop grid and export a print-ready, single-page Word document.
 
-[**Live demo →**](https://medschedule-ai.vercel.app/)
+[**Live demo →**](https://medschedule-ai.vercel.app/) &nbsp;·&nbsp; [API docs](https://medschedule-ai-api.vercel.app/docs)
 
 [![CI](https://github.com/dawoodcs195-spec/medschedule-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/dawoodcs195-spec/medschedule-ai/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-0f766e.svg)](LICENSE)
@@ -43,6 +43,7 @@ Turn a medical or dental module syllabus into a conflict-free, horizontally and 
 - [Project structure](#project-structure)
 - [Getting started](#getting-started)
 - [Environment variables](#environment-variables)
+- [API overview](#api-overview)
 - [Deployment](#deployment)
 - [Roadmap](#roadmap)
 - [Author](#author)
@@ -130,7 +131,7 @@ Both external services are optional: without `GEMINI_API_KEY` the rule-based par
 | Optimisation | Google OR-Tools CP-SAT |
 | Data | Supabase PostgreSQL 16 + `pgvector` (HNSW cosine index), SQLAlchemy 2, psycopg2 |
 | Documents | `python-docx`, `lxml`, `openpyxl` |
-| Tooling & CI | ESLint 9, GitHub Actions |
+| Tooling & CI | ESLint 9, GitHub Actions (frontend lint + build; backend compile, import check, smoke and test suites) |
 | Hosting | Vercel (frontend and FastAPI as a Python function); Render Blueprint and Dockerfile included |
 
 ## How scheduling and integration work
@@ -166,12 +167,12 @@ medschedule-ai/
 │   │   ├── core/                   # settings, DB engine, Gemini client, constants
 │   │   ├── models/                 # SQLAlchemy models & Pydantic schemas
 │   │   └── services/               # parser, integrator, solver, copilot, exporter
-│   ├── tests/smoke_full_pipeline.py
+│   ├── tests/                      # smoke pipeline + client, upload-field and real-timetable tests, fixtures
 │   ├── requirements.txt
 │   ├── vercel.json · Dockerfile · Procfile
 ├── supabase/migrations/            # PostgreSQL + pgvector schema
 ├── docs/                           # PRD, architecture plan, sample timetable, screenshots
-├── .github/workflows/ci.yml        # lint, build and backend smoke test
+├── .github/workflows/ci.yml        # frontend lint/build, backend compile, smoke + test suites
 ├── render.yaml                     # Render Blueprint for the backend
 └── AGENTS.md                       # domain rules & constraints for contributors/agents
 ```
@@ -216,10 +217,14 @@ Create a Supabase project (or any Postgres 16 with `pgvector`) and run `supabase
 
 ```bash
 cd frontend && npm run lint && npm run build
-cd backend  && python -m compileall -q app && python tests/smoke_full_pipeline.py && python tests/test_client_requirements.py
+cd backend  && python -m compileall -q app \
+  && python tests/smoke_full_pipeline.py \
+  && python tests/test_client_requirements.py \
+  && python tests/test_upload_fields.py \
+  && python tests/test_real_timetable.py
 ```
 
-The smoke test runs the full pipeline offline (ingest sample `.docx` → integrate → solve → validate a move → export). `test_client_requirements.py` uploads three classes at once (2nd Year MBBS `.docx`, 4th Year MBBS `.xlsx`, 1st Year BDS `.txt`, in `tests/fixtures/`) and checks the expected horizontal/vertical links and non-links, integrated ordering, teacher clashes, Copilot edits, report counts and exports.
+The smoke test runs the full pipeline offline (ingest sample `.docx` → integrate → solve → validate a move → export). `test_client_requirements.py` uploads three classes at once (2nd Year MBBS `.docx`, 4th Year MBBS `.xlsx`, 1st Year BDS `.txt`, in `tests/fixtures/`) and checks the expected horizontal/vertical links and non-links, integrated ordering, teacher clashes, Copilot edits, report counts and exports. `test_upload_fields.py` covers the upload form (session, module override, detected class) and `test_real_timetable.py` runs the template scheduler on an anonymised real module (no clashes, fixed rotations, subject order, export). All of these run in CI on every push and pull request.
 
 ## Environment variables
 
@@ -243,6 +248,22 @@ The smoke test runs the full pipeline offline (ingest sample `.docx` → integra
 | :--- | :---: | :--- |
 | `NEXT_PUBLIC_API_URL` | No | Backend base URL including `/api`. Defaults to `https://medschedule-ai-api.vercel.app/api` in production and `http://localhost:8000/api` in development. |
 
+## API overview
+
+All routes are under `/api` (interactive docs at `/docs`).
+
+| Area | Endpoints |
+| :--- | :--- |
+| System | `GET /health` |
+| Ingestion | `POST /ingest/text` · `POST /ingest/file` · `POST /ingest/batch` |
+| Reference | `GET/POST /departments` · `GET /reference/facilities` |
+| Integration | `POST /integrate/cluster` · `GET/POST /integrations` · `PATCH/PUT/DELETE /integrations/{id}` · `POST /integrate/suggest-clinical` |
+| Scheduling | `POST /schedule/generate` · `POST /schedule/generate-all` · `POST /schedule/original` · `POST /schedule/validate-move` · `POST /schedule/swap` · `POST /schedule/remove` · `POST /schedule/add-cell` · `POST /schedule/update-cell` |
+| Saved schedules | `GET /schedules/saved` · `POST /schedules/save` · `DELETE /schedules/saved/{id}` |
+| Copilot | `POST /copilot/chat` |
+| Analytics | `POST /analytics/report` |
+| Export | `POST /export/docx` · `POST /export/report-docx` |
+
 ## Deployment
 
 - **Frontend (Vercel).** Import the repo, set **Root Directory** to `frontend`, framework preset **Next.js**, and set `NEXT_PUBLIC_API_URL`. Pushes to `main` deploy to production; pull requests get preview deployments. Live at <https://medschedule-ai.vercel.app/>.
@@ -255,13 +276,15 @@ The smoke test runs the full pipeline offline (ingest sample `.docx` → integra
 - [ ] Share labs and lecture halls across classes (today each class's rotations are planned independently)
 - [ ] Authentication and multi-institution workspaces (Supabase Auth)
 - [ ] Persist saved schedules in Postgres instead of a local JSON file
-- [ ] Unit tests for solver constraints and the exporter; Playwright UI tests
+- [ ] Move the test scripts to pytest with coverage reporting; Playwright UI tests
 - [ ] PDF export alongside `.docx`
 
 ## Author
 
-**Muhammad Dawood**
-GitHub: [@dawoodcs195-spec](https://github.com/dawoodcs195-spec)
+**Muhammad Dawood**, Full-Stack Developer
+
+- Email: [dawood.cs195@gmail.com](mailto:dawood.cs195@gmail.com)
+- GitHub: [@dawoodcs195-spec](https://github.com/dawoodcs195-spec)
 
 If this project is useful to you, a ⭐ on the repo is appreciated.
 
